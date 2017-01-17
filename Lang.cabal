@@ -1,0 +1,42 @@
+name:                Lang
+version:             0.1.0.0
+synopsis:            Programming language
+description:         Please see README.md
+homepage:            https://github.com/githubuser/lang#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Alan Moy
+maintainer:          alan@themoys.org
+copyright:           2017 Alan Moy
+category:            Language
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+
+library
+  default-language:     Haskell2010
+  ghc-options:          -Wall
+  hs-source-dirs:       src
+  exposed-modules:      Lang.Core
+                        Lang.Type
+  build-depends:        base >= 4.7 && < 5
+
+executable lang
+  default-language:     Haskell2010
+  ghc-options:          -Wall
+  hs-source-dirs:       src
+  main-is:              Main.hs
+  build-depends:        Lang,
+                        base >= 4.7 && < 5
+
+test-suite lang-tests
+  type:                 exitcode-stdio-1.0
+  hs-source-dirs:       src tests
+  main-is:              TestSuite.hs
+  ghc-options:          -Wall
+  other-modules:        Lang.Type.Tests
+  build-depends:        Lang,
+                        HUnit,
+                        tasty,
+                        tasty-hunit,
+                        base >= 4.7 && < 5

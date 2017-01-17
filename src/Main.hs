@@ -1,5 +1,7 @@
 module Main where
 
+import Lang.Core
+
 main :: IO ()
 main = do
-  putStrLn "hello world"
+  putStrLn . show $ EVar "var"
