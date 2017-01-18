@@ -4,8 +4,8 @@ import qualified Data.Map as Map
 
 type TypeVariableName = String
 data Type = TVar TypeVariableName
-  | TCons String [Type]
-  deriving (Show, Eq)
+    | TCons String [Type]
+    deriving (Show, Eq)
 
 arrow :: Type -> Type -> Type
 arrow t1 t2 = TCons "arrow" [t1, t2]
