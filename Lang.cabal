@@ -19,6 +19,7 @@ library
   hs-source-dirs:       src
   exposed-modules:      Lang.Core
                         Lang.Type
+                        Lang.DependencyAnalysis
   build-depends:        base >= 4.7 && < 5,
                         containers
 
