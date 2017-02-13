@@ -26,6 +26,8 @@ testCompose = assert $ same [composed t, defined t, expected]
     t = TVar "t1" `TFun` TVar "t6"
     expected = TVar "t5" `TFun` TVar "t7"
 
+-- | Define an environment for use by tests containing basic operations.
+defaultEnv :: Environment
 defaultEnv = Environment
     (Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))])
 
@@ -36,24 +38,62 @@ testTiExprId = runTI (tiExpr defaultEnv e) @?= expectedType
     idBinding = Binding {identifier="id", arguments=["a"], body=EVar "a"}
     expectedType = TFun (TVar "t2") (TVar "t2")
 
+-- | Check that binding groups containing more than a minimal set of mutually
+-- recursive definitions will unnecessarily restrict polymorphism.
+testLargeBindingGroup :: Assertion
+testLargeBindingGroup = tiProgram defaultEnv program @?= expectedEnv
+  where
+    expectedEnv = Environment (Map.fromList
+                  [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
+                  , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
+                  , ("id", toScheme $ TFun TInt TInt)
+                  ])
+    program = [[ Binding {identifier="id", arguments=["a"], body=EVar "a"}
+               , Binding {identifier="f", arguments=fArgs, body=fBody}
+               ]]
+    fArgs = ["a", "b"]
+    fBody = EAp (EAp (EVar "+") (EVar "a")) (EAp (EVar "id") (EVar "b"))
+
+-- | Check that properly minimized binding groups result in maximally
+-- polymorphic types.
+testSmallBindingGroup :: Assertion
+testSmallBindingGroup = tiProgram defaultEnv program @?= expectedEnv
+  where
+    expectedEnv = Environment (Map.fromList
+                  [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
+                  , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
+                  , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))
+                  ])
+    program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]
+              , [Binding {identifier="f", arguments=fArgs, body=fBody}]
+              ]
+    fArgs = ["a", "b"]
+    fBody = EAp (EAp (EVar "+") (EVar "a")) (EAp (EVar "id") (EVar "b"))
+
 testTiProgram :: Assertion
 testTiProgram = tiProgram defaultEnv program @?= expectedEnv
   where
     expectedEnv = Environment (Map.fromList
                   [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("id", Scheme ["t6"] (TFun (TVar "t6") (TVar "t6")))
+                  , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))
                   ])
-    program = [[ Binding {identifier="f", arguments=fArgs, body=fBody}
-               , Binding {identifier="id", arguments=["a"], body=EVar "a"}
-               ]]
+    program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]
+              , [Binding {identifier="f", arguments=fArgs, body=fBody}]
+              ]
     fArgs = ["a", "b"]
     fBody = EAp (EAp (EVar "+") (EVar "a")) (EVar "b")
 
 tests :: TestTree
 tests = testGroup "Lang.Type"
-    [ testCase "testTypeVariables" testTypeVariables
-    , testCase "testCompose" testCompose
-    , testCase "testTiExprId" testTiExprId
-    , testCase "testTiProgram" testTiProgram
+    [ testGroup "Type Representation"
+        [ testCase "testTypeVariables" testTypeVariables
+        , testCase "testCompose" testCompose
+        ]
+    , testGroup "Type Inference"
+        [ testCase "testTiExprId" testTiExprId
+        , testCase "testTiProgram" testTiProgram
+        , testCase "testLargeBindingGroup" testLargeBindingGroup
+        , testCase "testSmallBindingGroup" testSmallBindingGroup
+        ]
     ]

@@ -52,6 +52,7 @@ instance Types a => Types [a] where
 
 -- | Create a left-biased composition of two substitutions.
 -- Invariant: apply (compose sub1 sub2) == (apply sub1 . apply sub2)
+-- TODO Test the invariant with QuickCheck.
 compose :: Subst -> Subst -> Subst
 compose sub1 sub2 = Map.map (apply sub1) sub2 `Map.union` sub1
 
@@ -100,11 +101,11 @@ instance Applicative TI where
     pure = return
     (<*>) = ap
 
+-- TODO Implement fail.
 instance Monad TI where
     return x = TI (\s n -> (s, n, x))
     TI f >>= g = TI (\s n -> case f s n of
         (s', m, x) -> let TI gx = g x in gx s' m)
-    -- TODO implement fail
 
 runTI :: TI a -> a
 runTI (TI f) = x where (_, _, x) = f empty 0
@@ -167,6 +168,10 @@ tiBoundExpr (Environment env) b t = do
     te <- tiExpr (Environment env') (body b)
     unify t $ foldr TFun te targs
 
+-- | Run type inference for each binding in the binding group. Every expression
+-- within the group can see the instantiated type variables representing every
+-- other. In order to obtain the most general types, bg should be a minimal set
+-- of mutually recursive definitions.
 tiBindingGroup :: Infer BindingGroup Environment
 tiBindingGroup (Environment env) bg = do
     -- Allocate a type variable for each binding.
