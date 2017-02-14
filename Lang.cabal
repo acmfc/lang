@@ -32,11 +32,13 @@ executable lang
                         base >= 4.7 && < 5
 
 test-suite lang-tests
+  default-language:     Haskell2010
   type:                 exitcode-stdio-1.0
   hs-source-dirs:       src tests
   main-is:              TestSuite.hs
   ghc-options:          -Wall
   other-modules:        Lang.Type.Tests
+                        Lang.DependencyAnalysis.Tests
   build-depends:        Lang,
                         HUnit,
                         tasty,

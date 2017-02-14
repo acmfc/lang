@@ -5,15 +5,17 @@ data Expr = EVar VariableName
     | ELit Literal
     | EAp Expr Expr
     | ELet BindingGroup Expr
-    deriving (Show)
+    deriving (Show, Eq)
 
 -- | Represents a single variable or function binding.
 data Binding = Binding { identifier :: VariableName
                        , arguments :: [VariableName]
                        , body :: Expr
-                       } deriving (Show)
--- | Represents a minimal set of mutually recursive bindings.
+                       } deriving (Show, Eq)
+
+-- | Represents a minimal set of mutually recursive bindings, i.e. every
+-- Binding in a BindingGroup depends on every other Binding in the group.
 type BindingGroup = [Binding]
 
 data Literal = LInt Integer
-    deriving (Show)
+    deriving (Show, Eq)
