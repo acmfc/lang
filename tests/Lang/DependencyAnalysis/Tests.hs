@@ -20,8 +20,8 @@ testExprDependencies = exprDependencies e Set.empty @?= expectedDeps
     e' = EAp (EAp (EVar "+") (EVar "f")) (ELit (LInt 0))
     expectedDeps = Set.fromList ["+", "a", "b"]
 
-testIgnoreDeps :: Assertion
-testIgnoreDeps = exprDependencies e ignore @?= expectedDeps
+testIgnore :: Assertion
+testIgnore = exprDependencies e ignore @?= expectedDeps
   where
     e = EAp (EAp (EVar "+") (EVar "a")) (EVar "b")
     ignore = Set.fromList ["+"]
@@ -54,7 +54,7 @@ testStructureBindings = structureBindings bs @?= expectedBindingGroups
 tests :: TestTree
 tests = testGroup "Lang.Type"
     [ testCase "testExprDependencies" testExprDependencies
-    , testCase "testIgnoreDeps" testIgnoreDeps
+    , testCase "testIgnore" testIgnore
     , testCase "testBindingDependencies" testBindingDependencies
     , testCase "testStructureBindings" testStructureBindings
     ]
