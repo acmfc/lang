@@ -11,7 +11,7 @@ initialTypeEnv :: TypeEnv
 initialTypeEnv =
     TypeEnv $ Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))]
 
-program :: [BindingGroup]
+program :: Program
 program = structureBindings
     [ Binding { identifier="f", arguments=["a"],
         body=EAp (EAp (EVar "+") (EVar "a")) (EAp (EVar "g") (ELit (LInt 0))) }
