@@ -1,6 +1,7 @@
 module Lang.Core where
 
 type VariableName = String
+
 data Expr = EVar VariableName
     | ELit Literal
     | EAp Expr Expr

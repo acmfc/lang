@@ -27,8 +27,8 @@ testCompose = assert $ same [composed t, defined t, expected]
     expected = TVar "t5" `TFun` TVar "t7"
 
 -- | Define an environment for use by tests containing basic operations.
-defaultEnv :: Environment
-defaultEnv = Environment
+defaultEnv :: TypeEnv
+defaultEnv = TypeEnv
     (Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))])
 
 testTiExprId :: Assertion
@@ -43,7 +43,7 @@ testTiExprId = runTI (tiExpr defaultEnv e) @?= expectedType
 testLargeBindingGroup :: Assertion
 testLargeBindingGroup = tiProgram defaultEnv program @?= expectedEnv
   where
-    expectedEnv = Environment (Map.fromList
+    expectedEnv = TypeEnv (Map.fromList
                   [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("id", toScheme $ TFun TInt TInt)
@@ -59,7 +59,7 @@ testLargeBindingGroup = tiProgram defaultEnv program @?= expectedEnv
 testSmallBindingGroup :: Assertion
 testSmallBindingGroup = tiProgram defaultEnv program @?= expectedEnv
   where
-    expectedEnv = Environment (Map.fromList
+    expectedEnv = TypeEnv (Map.fromList
                   [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))
@@ -73,7 +73,7 @@ testSmallBindingGroup = tiProgram defaultEnv program @?= expectedEnv
 testTiProgram :: Assertion
 testTiProgram = tiProgram defaultEnv program @?= expectedEnv
   where
-    expectedEnv = Environment (Map.fromList
+    expectedEnv = TypeEnv (Map.fromList
                   [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
                   , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))

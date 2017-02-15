@@ -1,14 +1,13 @@
 {-|
-This module implements function-level dependency analysis.
+Implements function-level dependency analysis.
 -}
 
-module Lang.DependencyAnalysis ( exprDependencies
-                               , bindingDependencies
-                               , structureBindings ) where
+module Lang.DependencyAnalysis where
 
 import qualified Data.Graph as Graph
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+
 import Lang.Core
 
 -- | Find all VariableNames referenced in an Expr.
@@ -30,16 +29,18 @@ bindingDependencies b ignore = exprDependencies (body b) ignore'
   where
     ignore' = Set.union (Set.fromList (identifier b : arguments b)) ignore
 
--- Dependency graphs are represented below in two ways:
--- * In the first, a node is a Binding, and an edge from i to j with label x
--- indicates that i depends on a symbol x which is defined by j.
--- * In the second, a node is a BindingGroup and an edge from i to j indicates
--- that some Binding in i depends on some symbol defined in j.
+-- Two sorts of dependency graphs are used below:
+--
+-- * Binding dependency graph: a node is a Binding, and an edge from i to j
+-- with label x indicates that i depends on a symbol x which is defined by j.
+--
+-- * BindingGroup dependency graph: a node is a BindingGroup and an edge from i
+-- to j indicates that some Binding in i depends on some symbol defined in j.
 --
 -- We use Data.Graph to run strongly connected components and topological sort
--- algorithms over our graphs. It requires that every node have an alternative,
--- unique key. In the first type of graph, a key is a VariableName equal to the
--- symbol defined by the Binding. In the second type of graph, a key is a
+-- algorithms over our graphs. It requires that every node have a unique key.
+-- In a Binding dependency graph, a key is a VariableName equal to the symbol
+-- defined by the Binding. In a BindingGroup dependency graph, a key is a
 -- BindingGroupId - a unique value arbitrarily assigned to the BindingGroup.
 
 -- | Represents a strongly connected component in the Binding dependency graph.
@@ -48,7 +49,7 @@ bindingDependencies b ignore = exprDependencies (body b) ignore'
 type Scc = [(Binding, VariableName, [VariableName])]
 
 -- | Build a dependency graph from a list of bindings and return a list of
--- strongly connected components, where each component represents a minimal
+-- strongly connected components, so that each component represents a minimal
 -- binding group.
 minimalBindingGroups :: [Binding] -> [Scc]
 minimalBindingGroups bs = map Graph.flattenSCC sccs
@@ -57,18 +58,23 @@ minimalBindingGroups bs = map Graph.flattenSCC sccs
     adjacencyList = map (\b -> (b, identifier b, listDependencies b)) bs
     listDependencies b = Set.toList (bindingDependencies b Set.empty)
 
+type BindingGroupId = Int
+
+-- | Describes an intermediate stage between a Binding dependency graph and a
+-- BindingGroup dependency graph. LabeledSccs are constructed from the former
+-- and used to construct the latter.
 type LabeledScc = (Scc, BindingGroupId)
 
--- Need to map VariableName -> Scc ID (Int)
--- Associate an Int with each Scc:
--- zip [0..] (minimalBindingGroups bindings)
+-- | Assign an arbitrary BindingGroupId to each Scc.
 labelSccs :: [Scc] -> [LabeledScc]
 labelSccs sccs = zip sccs [0..]
 
-type BindingGroupId = Int
+-- | Maps a VariableName to the BindingGroupId for the BindingGroup in which it
+-- was defined.
 type BindingGroupIdMap = Map.Map VariableName BindingGroupId
 
--- | Collect all names bound in scc and map them to n.
+-- | Collect all names bound in an Scc and map them to the BindingGroupId
+-- allocated to that Scc.
 makeBindingGroupIdMap :: LabeledScc -> BindingGroupIdMap
 makeBindingGroupIdMap (scc, n) = Map.fromList assocList
   where
@@ -76,32 +82,54 @@ makeBindingGroupIdMap (scc, n) = Map.fromList assocList
     boundNames = map identifier . getBindings
     getBindings = map (\(b, _,  _) -> b)
 
-lookupBindingGroupIds :: [VariableName] -> BindingGroupIdMap -> [Int]
-lookupBindingGroupIds vns bindingGroupIdMap= foldr (\vn bids -> case (Map.lookup vn bindingGroupIdMap) of
-    Just bid -> bid : bids
-    Nothing -> bids) [] vns
+-- | Collect BindingGroup dependencies for every Binding dependency that's
+-- present in bindingGroupIdMap.
+lookupBindingGroupDependencies ::
+    [VariableName] -> BindingGroupIdMap -> [BindingGroupId]
+lookupBindingGroupDependencies vns bindingGroupIdMap =
+    foldr (\vn bgids -> case (Map.lookup vn bindingGroupIdMap) of
+            Just bgid -> bgid : bgids
+            Nothing -> bgids) [] vns
 
-type DagNode = (BindingGroup, BindingGroupId, [BindingGroupId])
+type BindingGroupDepNode = (BindingGroup, BindingGroupId, [BindingGroupId])
 
-makeDagNode :: BindingGroupIdMap -> LabeledScc -> DagNode
-makeDagNode bindingGroupIdMap (scc, n) = let (bg, _, vnss) = unzip3 scc in
-    (bg, n, lookupBindingGroupIds (concat vnss) bindingGroupIdMap)
+-- | Convert a node in the Binding dependency graph to one in the BindingGroup
+-- dependency graph.
+makeBindingGroupDepNode :: BindingGroupIdMap -> LabeledScc -> BindingGroupDepNode
+makeBindingGroupDepNode bindingGroupIdMap (scc, n) =
+    (bg, n, bindingGroupDependencies)
+      where
+        (bg, _, vnss) = unzip3 scc
+        bindingGroupDependencies =
+            lookupBindingGroupDependencies (concat vnss) bindingGroupIdMap
 
-dependencyDag :: [Scc] ->
-    (Graph.Graph, Graph.Vertex -> DagNode, BindingGroupId -> Maybe Graph.Vertex)
-dependencyDag sccs = Graph.graphFromEdges nodes
+-- | Construct a BindingGroup dependency graph from a Binding dependency graph.
+makeBindingGroupDepGraph :: [Scc] -> ( Graph.Graph
+                                     , Graph.Vertex -> BindingGroupDepNode
+                                     , BindingGroupId -> Maybe Graph.Vertex
+                                     )
+makeBindingGroupDepGraph sccs = Graph.graphFromEdges nodes
   where
-    nodes = map (makeDagNode bindingGroupIdMap) labeledSccs
+    nodes = map (makeBindingGroupDepNode bindingGroupIdMap) labeledSccs
     bindingGroupIdMap = Map.unions $ map makeBindingGroupIdMap labeledSccs
     labeledSccs = labelSccs sccs
 
-orderBindingGroups :: [Scc] -> [BindingGroup]
-orderBindingGroups sccs =
+-- | Run a topological sort on a BindingGroup dependency graph and extract the
+-- resulting BindingGroups, ordered so that each element in the list depends
+-- only on those before it.
+orderBindingGroups :: ( Graph.Graph
+                      , Graph.Vertex -> BindingGroupDepNode
+                      , BindingGroupId -> Maybe Graph.Vertex
+                      ) -> [BindingGroup]
+orderBindingGroups (graph, vertexToNode, _) =
     map (extractBindingGroups . vertexToNode) orderedVertices
       where
         extractBindingGroups node = let (bg, _, _) = node in bg
-        (graph, vertexToNode, _) = dependencyDag sccs
         orderedVertices = reverse $ Graph.topSort graph
 
+-- | Arrange a list of Bindings into a list of BindingGroups so that each
+-- BindingGroup contains a minimal set of mutually recursive Bindings and
+-- depends only on those that come before it in the resulting list.
 structureBindings :: [Binding] -> [BindingGroup]
-structureBindings bs = orderBindingGroups $ minimalBindingGroups bs
+structureBindings =
+    orderBindingGroups . makeBindingGroupDepGraph . minimalBindingGroups

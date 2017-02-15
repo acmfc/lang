@@ -1,6 +1,6 @@
 {-|
-This module implements a simple Hindley-Milner type system. The type
-representations and unification algorithm are based on
+Implements a simple Hindley-Milner type system. The type representations and
+unification code are based on:
 <https://web.cecs.pdx.edu/~mpj/thih/ Typing Haskell in Haskell>.
 -}
 module Lang.Type where
@@ -8,9 +8,11 @@ module Lang.Type where
 import Control.Monad (zipWithM_, ap)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+
 import Lang.Core
 
 type TypeVariableName = String
+
 data Type = TVar TypeVariableName
     | TInt
     | TFun Type Type
@@ -51,8 +53,7 @@ instance Types a => Types [a] where
     apply sub = map (apply sub)
 
 -- | Create a left-biased composition of two substitutions.
--- Invariant: apply (compose sub1 sub2) == (apply sub1 . apply sub2)
--- TODO Test the invariant with QuickCheck.
+-- prop> apply (compose sub1 sub2) == (apply sub1 . apply sub2)
 compose :: Subst -> Subst -> Subst
 compose sub1 sub2 = Map.map (apply sub1) sub2 `Map.union` sub1
 
@@ -82,16 +83,16 @@ varBind tvn t
         fail $ "Occurs check failed: " ++ tvn ++ " occurs in " ++ show t
     | otherwise = return $ singleton tvn t
 
--- | Map program variables to type schemes.
-newtype Environment = Environment (Map.Map VariableName Scheme)
+-- | Map term variables to type schemes.
+newtype TypeEnv = TypeEnv (Map.Map VariableName Scheme)
     deriving (Show, Eq)
 
-instance Types Environment where
-    ftv (Environment env) = ftv (Map.elems env)
-    apply sub (Environment env) = Environment (Map.map (apply sub) env)
+instance Types TypeEnv where
+    ftv (TypeEnv env) = ftv (Map.elems env)
+    apply sub (TypeEnv env) = TypeEnv (Map.map (apply sub) env)
 
 -- | Define a monad to track the state of the substitution and a counter for
--- generating variable names.
+-- generating type variable names.
 newtype TI a = TI (Subst -> Int -> (Subst, Int, a))
 
 instance Functor TI where
@@ -125,23 +126,23 @@ newTVar :: TI Type
 newTVar = TI (\s n -> (s, n + 1, TVar ("t" ++ show n)))
 
 -- | Quantify all type variables not free in the environment.
-gen :: Environment -> Type -> Scheme
+gen :: TypeEnv -> Type -> Scheme
 gen env t = Scheme tvns t
   where tvns = Set.toList (Set.difference (ftv t) (ftv env))
 
 -- | Instantiate quantified type variables in a type scheme with fresh type
 -- variables.
 inst :: Scheme -> TI Type
-inst (Scheme tvns t) = do ts <- mapM (\_ -> newTVar) tvns
+inst (Scheme tvns t) = do ts <- mapM (const newTVar) tvns
                           return $ apply (Map.fromList (zip tvns ts)) t
 
-type Infer e t = Environment -> e -> TI t
+type Infer e t = TypeEnv -> e -> TI t
 
 tiLit :: Literal -> TI Type
 tiLit (LInt _) = return TInt
 
 tiExpr :: Infer Expr Type
-tiExpr (Environment env) (EVar x) = case Map.lookup x env of
+tiExpr (TypeEnv env) (EVar x) = case Map.lookup x env of
     Nothing -> fail $ "Unbound variable: " ++ x
     Just scheme -> inst scheme
 tiExpr _ (ELit l) = tiLit l
@@ -151,56 +152,58 @@ tiExpr env (EAp e1 e2) = do
     t <- newTVar
     unify (TFun te2 t) te1
     return t
-tiExpr (Environment env) (ELet bg e) = do
-    Environment env' <- tiBindingGroup (Environment env) bg
-    tiExpr (Environment (Map.union env' env)) e
+tiExpr (TypeEnv env) (ELet bg e) = do
+    TypeEnv env' <- tiBindingGroup (TypeEnv env) bg
+    tiExpr (TypeEnv (Map.union env' env)) e
 
 toScheme :: Type -> Scheme
 toScheme = Scheme []
 
 -- | Run type inference for the expression in a binding and unify it with t.
-tiBoundExpr :: Environment -> Binding -> Type -> TI ()
-tiBoundExpr (Environment env) b t = do
+-- Because t takes on the type of the expression, env should map b's identifier
+-- to t to allow for recursive bindings.
+tiBoundExpr :: TypeEnv -> Binding -> Type -> TI ()
+tiBoundExpr (TypeEnv env) b t = do
     -- Create a fresh type variable for each argument.
-    targs <- mapM (\_ -> newTVar) (arguments b)
+    targs <- mapM (const newTVar) (arguments b)
     let schemes = map toScheme targs
         env' = Map.union (Map.fromList (zip (arguments b) schemes)) env
-    te <- tiExpr (Environment env') (body b)
+    te <- tiExpr (TypeEnv env') (body b)
     unify t $ foldr TFun te targs
 
 -- | Run type inference for each binding in the binding group. Every expression
 -- within the group can see the instantiated type variables representing every
 -- other. In order to obtain the most general types, bg should be a minimal set
 -- of mutually recursive definitions.
-tiBindingGroup :: Infer BindingGroup Environment
-tiBindingGroup (Environment env) bg = do
+tiBindingGroup :: Infer BindingGroup TypeEnv
+tiBindingGroup (TypeEnv env) bg = do
     -- Allocate a type variable for each binding.
-    ts <- mapM (\_ -> newTVar) bg
+    ts <- mapM (const newTVar) bg
     let identifiers = map identifier bg
         schemes = map toScheme ts
         -- Create an environment mapping each identifier to its type scheme.
         env' = Map.union (Map.fromList (zip identifiers schemes)) env
     -- Unify the type allocated for each binding with the type inferred for its
     -- expression.
-    zipWithM_ (tiBoundExpr (Environment env')) bg ts
+    zipWithM_ (tiBoundExpr (TypeEnv env')) bg ts
     sub <- getSubst
     let ts' = apply sub ts
         -- Generalize all the types we found for the newly-bound names.
-        schemes' = map (gen (apply sub (Environment env))) ts'
-    return . Environment . Map.fromList $ zip identifiers schemes'
+        schemes' = map (gen (apply sub (TypeEnv env))) ts'
+    return . TypeEnv . Map.fromList $ zip identifiers schemes'
 
 -- | Enhance a type inferencer to run over a list rather than a single entity,
 -- accumulating an environment as it goes.
-tiSequence :: Infer a Environment -> Infer [a] Environment
+tiSequence :: Infer a TypeEnv -> Infer [a] TypeEnv
 tiSequence _ env [] = return env
-tiSequence ti (Environment env) (x : xs) = do
-    Environment env' <- ti (Environment env) x
-    Environment env'' <- tiSequence ti (Environment (Map.union env' env)) xs
-    return . Environment $ Map.union env'' env'
+tiSequence ti (TypeEnv env) (x : xs) = do
+    TypeEnv env' <- ti (TypeEnv env) x
+    TypeEnv env'' <- tiSequence ti (TypeEnv (Map.union env' env)) xs
+    return . TypeEnv $ Map.union env'' env'
 
 type Program = [BindingGroup]
 
-tiProgram :: Environment -> Program -> Environment
+tiProgram :: TypeEnv -> Program -> TypeEnv
 tiProgram env bgs = runTI $ do
     env' <- tiSequence tiBindingGroup env bgs
     s <- getSubst
