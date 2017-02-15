@@ -4,6 +4,7 @@ import qualified Data.Map as Map
 
 import Lang.Core
 import Lang.DependencyAnalysis
+import Lang.PrettyPrint
 import Lang.Type
 
 initialTypeEnv :: TypeEnv
@@ -22,4 +23,6 @@ program = structureBindings
 
 main :: IO ()
 main = do
-    putStrLn . show $ tiProgram initialTypeEnv program
+    let typeEnv = tiProgram initialTypeEnv program
+    putStrLn "Demo program was successfully type-checked:"
+    mapM_ putStrLn $ printTypeEnv typeEnv
