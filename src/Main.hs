@@ -6,13 +6,14 @@ import Lang.Core
 import Lang.DependencyAnalysis
 import Lang.PrettyPrint
 import Lang.Type
+import Lang.Parser
 
 initialTypeEnv :: TypeEnv
 initialTypeEnv =
     TypeEnv $ Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))]
 
-program :: Program
-program = structureBindings
+exampleProgram :: Program
+exampleProgram = structureBindings
     [ Binding { identifier="f", arguments=["a"],
         body=EAp (EAp (EVar "+") (EVar "a")) (EAp (EVar "g") (ELit (LInt 0))) }
     , Binding { identifier="g", arguments=["a"],
@@ -23,6 +24,6 @@ program = structureBindings
 
 main :: IO ()
 main = do
-    let typeEnv = tiProgram initialTypeEnv program
+    let typeEnv = tiProgram initialTypeEnv exampleProgram
     putStrLn "Demo program was successfully type-checked:"
     mapM_ putStrLn $ printTypeEnv typeEnv

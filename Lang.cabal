@@ -20,9 +20,11 @@ library
   exposed-modules:      Lang.Core,
                         Lang.DependencyAnalysis,
                         Lang.PrettyPrint,
-                        Lang.Type
+                        Lang.Type,
+                        Lang.Parser
   build-depends:        base >= 4.7 && < 5,
                         containers,
+                        parsec,
                         pretty
 
 executable lang
@@ -33,10 +35,12 @@ executable lang
   other-modules:        Lang.Core,
                         Lang.DependencyAnalysis,
                         Lang.PrettyPrint,
-                        Lang.Type
+                        Lang.Type,
+                        Lang.Parser
   build-depends:        Lang,
                         base >= 4.7 && < 5,
                         containers,
+                        parsec,
                         pretty
 
 test-suite lang-tests
@@ -47,12 +51,16 @@ test-suite lang-tests
   ghc-options:          -Wall
   other-modules:        Lang.Type.Tests,
                         Lang.DependencyAnalysis.Tests,
+                        Lang.Parser.Tests,
                         Lang.Core,
                         Lang.Type,
-                        Lang.DependencyAnalysis
+                        Lang.DependencyAnalysis,
+                        Lang.Parser
   build-depends:        Lang,
                         HUnit,
                         tasty,
                         tasty-hunit,
                         base >= 4.7 && < 5,
-                        containers
+                        containers,
+                        parsec
+
