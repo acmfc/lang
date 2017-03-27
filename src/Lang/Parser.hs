@@ -6,6 +6,7 @@ module Lang.Parser
     , term
     , binding
     , program
+    , parseProgram
     ) where
 
 import Data.Functor.Identity
@@ -34,31 +35,32 @@ languageDef = Token.LanguageDef
 tokenParser :: Token.GenTokenParser String () Identity
 tokenParser = Token.makeTokenParser languageDef
 
--- | Parses a variable.
+-- | Variable parser.
 var :: Parser Expr
 var = EVar <$> Token.identifier tokenParser
 
--- | Parses a literal value.
+-- | Literal value parser.
 literal :: Parser Expr
 literal = ELit . LInt <$> Token.integer tokenParser
 
 term :: Parser Expr
 term = var <|> literal
 
--- | Parses a function application.
+-- | Function application parser.
 application :: Parser Expr
 application = Token.lexeme tokenParser $ chainl1 expr' (return EAp)
 
--- | Parses an expression.
+-- | Expression parser.
 expr :: Parser Expr
 expr = application <|> term
 
--- | Parses expressions that can be found in a function application. Further
--- applications must be enclosed in parentheses to avoid infinite recursion.
+-- | Parser for expressions that can be found in a function application.
+-- Further applications must be enclosed in parentheses to avoid infinite
+-- recursion.
 expr' :: Parser Expr
 expr' = Token.parens tokenParser application <|> term
 
--- | Parses a let binding.
+-- | Let binding parser.
 binding :: Parser Binding
 binding = do
     _ <- Token.reserved tokenParser "let"
@@ -68,7 +70,10 @@ binding = do
     e <- expr
     return $ Binding {identifier = boundId, arguments = args, body = e}
 
--- | Parses a program as a sequence of bindings.
+-- | Parser for a program as a sequence of bindings.
 program :: Parser BindingGroup
 program = many binding
+
+parseProgram :: String -> Either ParseError BindingGroup
+parseProgram = parse program ""
 

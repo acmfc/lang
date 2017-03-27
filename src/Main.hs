@@ -1,8 +1,8 @@
 module Main where
 
+import Data.List
 import qualified Data.Map as Map
 
-import Lang.Core
 import Lang.DependencyAnalysis
 import Lang.PrettyPrint
 import Lang.Type
@@ -10,20 +10,20 @@ import Lang.Parser
 
 initialTypeEnv :: TypeEnv
 initialTypeEnv =
-    TypeEnv $ Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))]
+    TypeEnv $ Map.fromList [("add", toScheme (TFun TInt (TFun TInt TInt)))]
 
-exampleProgram :: Program
-exampleProgram = structureBindings
-    [ Binding { identifier="f", arguments=["a"],
-        body=EAp (EAp (EVar "+") (EVar "a")) (EAp (EVar "g") (ELit (LInt 0))) }
-    , Binding { identifier="g", arguments=["a"],
-        body=EAp (EVar "h") (EVar "a") }
-    , Binding { identifier="h", arguments=["a"],
-        body=EAp (EVar "g") (EVar "a") }
+exampleProgram :: String
+exampleProgram = intercalate "\n"
+    [ "let f a = add a (g 0)"
+    , "let g a = h a"
+    , "let h a = g a"
     ]
 
 main :: IO ()
-main = do
-    let typeEnv = tiProgram initialTypeEnv exampleProgram
-    putStrLn "Demo program was successfully type-checked:"
-    mapM_ putStrLn $ printTypeEnv typeEnv
+main = case parseProgram exampleProgram of
+    Left err -> putStrLn $ "Parse error: " ++ show err
+    Right ast -> do
+        let typeEnv = tiProgram initialTypeEnv (structureBindings ast)
+        putStrLn "Demo program was successfully type-checked:"
+        mapM_ putStrLn $ printTypeEnv typeEnv
+
