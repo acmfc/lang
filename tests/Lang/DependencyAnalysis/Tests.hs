@@ -52,7 +52,7 @@ testStructureBindings = structureBindings bs @?= expectedBindingGroups
         ]
 
 tests :: TestTree
-tests = testGroup "Lang.Type"
+tests = testGroup "Lang.DependencyAnalysis"
     [ testCase "testExprDependencies" testExprDependencies
     , testCase "testIgnore" testIgnore
     , testCase "testBindingDependencies" testBindingDependencies

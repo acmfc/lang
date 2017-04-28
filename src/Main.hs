@@ -10,11 +10,14 @@ import Lang.Parser
 
 initialTypeEnv :: TypeEnv
 initialTypeEnv =
-    TypeEnv $ Map.fromList [("add", toScheme (TFun TInt (TFun TInt TInt)))]
+    TypeEnv $ Map.fromList [("add", toScheme tAdd)]
+      where
+        tAdd = makeFun tInt (makeFun tInt tInt)
 
 exampleProgram :: String
 exampleProgram = intercalate "\n"
-    [ "let f a = add a (g 0)"
+    [ "let apply f x = f x"
+    , "let f a = add a (g 0)"
     , "let g a = h a"
     , "let h a = g a"
     ]

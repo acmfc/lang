@@ -5,6 +5,7 @@ unification code are based on:
 -}
 module Lang.Type where
 
+import Control.Exception.Base (assert)
 import Control.Monad (zipWithM_, ap)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -13,40 +14,76 @@ import Lang.Core
 
 type TypeVariableName = String
 
-data Type = TVar TypeVariableName
-    | TInt
-    | TFun Type Type
+data Kind = KStar | KFun Kind Kind | KRow | KLab
     deriving (Show, Eq, Ord)
 
--- | Collect all TypeVariableNames referenced in a Type.
-typeVariables :: Type -> Set.Set TypeVariableName
-typeVariables (TVar tvn) = Set.singleton tvn
-typeVariables TInt = Set.empty
-typeVariables (TFun t1 t2) = Set.union (typeVariables t1) (typeVariables t2)
+data Type = TVar Tyvar
+    | TCon Tycon
+    | TAp Type Type
+    deriving (Show, Eq, Ord)
 
-type Subst = Map.Map TypeVariableName Type
+data Tyvar = Tyvar TypeVariableName Kind
+    deriving (Show, Eq, Ord)
+
+data Tycon = Tycon String Kind
+    deriving (Show, Eq, Ord)
+
+tInt :: Type
+tInt = TCon (Tycon "Int" KStar)
+
+tArrow :: Type
+tArrow = TCon (Tycon "(->)" (KFun KStar (KFun KStar KStar)))
+
+makeFun :: Type -> Type -> Type
+makeFun a b = TAp (TAp tArrow a) b
+
+class HasKind t where
+    kind :: t -> Kind
+
+instance HasKind Tyvar where
+    kind (Tyvar _ k) = k
+
+instance HasKind Tycon where
+    kind (Tycon _ k) = k
+
+instance HasKind Type where
+    kind (TCon tc) = kind tc
+    kind (TVar u) = kind u
+    kind (TAp t _) = case (kind t) of
+        (KFun _ k) -> k
+        KStar -> assert False KStar
+        KRow -> assert False KRow
+        KLab -> assert False KLab
+
+-- | Collect all Tyvars referenced in a Type.
+typeVariables :: Type -> Set.Set Tyvar
+typeVariables (TVar u) = Set.singleton u
+typeVariables (TAp t1 t2) = Set.union (typeVariables t1) (typeVariables t2)
+typeVariables _ = Set.empty
+
+type Subst = Map.Map Tyvar Type
 
 class Types a where
-    ftv :: a -> Set.Set TypeVariableName
+    ftv :: a -> Set.Set Tyvar
     apply :: Subst -> a -> a
 
 instance Types Type where
-    ftv (TVar tvn) = Set.singleton tvn
-    ftv TInt = Set.empty
-    ftv (TFun t1 t2) = Set.union (ftv t1) (ftv t2)
-    apply sub (TVar tvn) = Map.findWithDefault (TVar tvn) tvn sub
-    apply sub (TFun t1 t2) = TFun (apply sub t1) (apply sub t2)
+    ftv (TVar u) = Set.singleton u
+    ftv (TAp t1 t2) = Set.union (ftv t1) (ftv t2)
+    ftv _ = Set.empty
+    apply sub t@(TVar u) = Map.findWithDefault t u sub
+    apply sub (TAp t1 t2) = TAp (apply sub t1) (apply sub t2)
     apply _ t = t
 
 -- | Define a type scheme or polytype. Contains a type and a list of all
 -- quantified type variables within the type.
-data Scheme = Scheme [TypeVariableName] Type
+data Scheme = Scheme [Tyvar] Type
     deriving (Show, Eq)
 
 instance Types Scheme where
-    ftv (Scheme tvns t) = Set.difference (ftv t) (Set.fromList tvns)
-    apply sub (Scheme tvns t) =
-        Scheme tvns (apply (foldr Map.delete sub tvns) t)
+    ftv (Scheme us t) = Set.difference (ftv t) (Set.fromList us)
+    apply sub (Scheme us t) =
+        Scheme us (apply (foldr Map.delete sub us) t)
 
 instance Types a => Types [a] where
     ftv xs = foldr Set.union Set.empty (map ftv xs)
@@ -57,7 +94,7 @@ instance Types a => Types [a] where
 compose :: Subst -> Subst -> Subst
 compose sub1 sub2 = Map.map (apply sub1) sub2 `Map.union` sub1
 
-singleton :: TypeVariableName -> Type -> Subst
+singleton :: Tyvar -> Type -> Subst
 singleton = Map.singleton
 
 empty :: Subst
@@ -65,23 +102,24 @@ empty = Map.empty
 
 -- | Compute the most general unifier of two types.
 unifier :: Monad m => Type -> Type -> m Subst
-unifier (TFun t1 t2) (TFun t1' t2') = do
+unifier (TAp t1 t2) (TAp t1' t2') = do
     sub1 <- unifier t1 t1'
     sub2 <- unifier (apply sub1 t2) (apply sub1 t2')
     return $ compose sub2 sub1
-unifier (TVar tvn) t = varBind tvn t
-unifier t (TVar tvn) = varBind tvn t
+unifier (TVar u) t = varBind u t
+unifier t (TVar u) = varBind u t
 unifier t1 t2
     | t1 == t2 = return empty
     | otherwise = fail $ "Types do not unify: " ++ show t1 ++ ", " ++ show t2
 
--- | Create a substitution mapping tvn to t.
-varBind :: Monad m => TypeVariableName -> Type -> m Subst
-varBind tvn t
-    | t == TVar tvn = return empty
-    | tvn `elem` typeVariables t =
-        fail $ "Occurs check failed: " ++ tvn ++ " occurs in " ++ show t
-    | otherwise = return $ singleton tvn t
+-- | Create a substitution mapping a Tyvar to a Type after performing an occurs
+-- check.
+varBind :: Monad m => Tyvar -> Type -> m Subst
+varBind u (TVar v) | u == v = return empty
+varBind u t
+    | u `elem` typeVariables t =
+        fail $ "Occurs check failed: " ++ show u ++ " occurs in " ++ show t
+    | otherwise = return $ singleton u t
 
 -- | Map term variables to type schemes.
 newtype TypeEnv = TypeEnv (Map.Map VariableName Scheme)
@@ -122,24 +160,24 @@ unify t1 t2 = do sub <- getSubst
                  u <- unifier (apply sub t1) (apply sub t2)
                  extendSubst u
 
-newTVar :: TI Type
-newTVar = TI (\s n -> (s, n + 1, TVar ("t" ++ show n)))
+newTVar :: Kind -> TI Type
+newTVar k = TI (\s n -> (s, n + 1, TVar (Tyvar ("t" ++ show n) k)))
 
 -- | Quantify all type variables not free in the environment.
 gen :: TypeEnv -> Type -> Scheme
-gen env t = Scheme tvns t
-  where tvns = Set.toList (Set.difference (ftv t) (ftv env))
+gen env t = Scheme us t
+  where us = Set.toList (Set.difference (ftv t) (ftv env))
 
 -- | Instantiate quantified type variables in a type scheme with fresh type
 -- variables.
 inst :: Scheme -> TI Type
-inst (Scheme tvns t) = do ts <- mapM (const newTVar) tvns
-                          return $ apply (Map.fromList (zip tvns ts)) t
+inst (Scheme us t) = do ts <- mapM newTVar (map kind us)
+                        return $ apply (Map.fromList (zip us ts)) t
 
 type Infer e t = TypeEnv -> e -> TI t
 
 tiLit :: Literal -> TI Type
-tiLit (LInt _) = return TInt
+tiLit (LInt _) = return tInt
 
 tiExpr :: Infer Expr Type
 tiExpr (TypeEnv env) (EVar x) = case Map.lookup x env of
@@ -149,13 +187,14 @@ tiExpr _ (ELit l) = tiLit l
 tiExpr env (EAp e1 e2) = do
     te1 <- tiExpr env e1
     te2 <- tiExpr env e2
-    t <- newTVar
-    unify (TFun te2 t) te1
+    t <- newTVar KStar
+    unify (makeFun te2 t) te1
     return t
 tiExpr (TypeEnv env) (ELet bg e) = do
     TypeEnv env' <- tiBindingGroup (TypeEnv env) bg
     tiExpr (TypeEnv (Map.union env' env)) e
 
+-- | Creates a polytype from a monotype without any quantifiers.
 toScheme :: Type -> Scheme
 toScheme = Scheme []
 
@@ -165,11 +204,11 @@ toScheme = Scheme []
 tiBoundExpr :: TypeEnv -> Binding -> Type -> TI ()
 tiBoundExpr (TypeEnv env) b t = do
     -- Create a fresh type variable for each argument.
-    targs <- mapM (const newTVar) (arguments b)
+    targs <- mapM (const (newTVar KStar)) (arguments b)
     let schemes = map toScheme targs
         env' = Map.union (Map.fromList (zip (arguments b) schemes)) env
     te <- tiExpr (TypeEnv env') (body b)
-    unify t $ foldr TFun te targs
+    unify t $ foldr makeFun te targs
 
 -- | Run type inference for each binding in the binding group. Every expression
 -- within the group can see the instantiated type variables representing every
@@ -178,7 +217,7 @@ tiBoundExpr (TypeEnv env) b t = do
 tiBindingGroup :: Infer BindingGroup TypeEnv
 tiBindingGroup (TypeEnv env) bg = do
     -- Allocate a type variable for each binding.
-    ts <- mapM (const newTVar) bg
+    ts <- mapM (const (newTVar KStar)) bg
     let identifiers = map identifier bg
         schemes = map toScheme ts
         -- Create an environment mapping each identifier to its type scheme.

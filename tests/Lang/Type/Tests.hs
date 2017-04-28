@@ -10,33 +10,38 @@ import qualified Data.Set as Set
 import Lang.Type
 import Lang.Core
 
+tvs :: [Tyvar]
+tvs = map (\n -> Tyvar ("t" ++ show n) KStar) ([0..] :: [Integer])
+
 testTypeVariables :: Assertion
-testTypeVariables =
-    typeVariables (TVar "t1" `TFun` TVar "t2") @?= Set.fromList ["t1", "t2"]
+testTypeVariables = typeVariables t @?= Set.fromList [tvs !! 1, tvs !! 2]
+      where
+        t = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 2))
 
 testCompose :: Assertion
-testCompose = assert $ same [composed t, defined t, expected]
+testCompose = assert $ all (== composed t) [defined t, expected]
   where
-    same (x:xs) = all (== x) xs
-    same [] = True
     composed = apply (compose sub2 sub1)
-    defined = (apply sub2 . apply sub1)
-    sub1 = Map.singleton "t1" (TVar "t2")
-    sub2 = Map.fromAscList [("t2", TVar "t5"), ("t6", TVar "t7")]
-    t = TVar "t1" `TFun` TVar "t6"
-    expected = TVar "t5" `TFun` TVar "t7"
+    defined = apply sub2 . apply sub1
+    sub1 = Map.singleton (tvs !! 1) (TVar (tvs !! 2))
+    sub2 = Map.fromAscList [ (tvs !! 2, TVar (tvs !! 5))
+                           , (tvs !! 6, TVar (tvs !! 7))
+                           ]
+    t = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 6))
+    expected = makeFun (TVar (tvs !! 5)) (TVar (tvs !! 7))
 
 -- | Define an environment for use by tests containing basic operations.
 defaultEnv :: TypeEnv
-defaultEnv = TypeEnv
-    (Map.fromList [("+", toScheme (TFun TInt (TFun TInt TInt)))])
+defaultEnv = TypeEnv (Map.fromList [("+", toScheme t)])
+  where
+    t = makeFun tInt (makeFun tInt tInt)
 
 testTiExprId :: Assertion
 testTiExprId = runTI (tiExpr defaultEnv e) @?= expectedType
   where
     e = ELet [idBinding] (EVar "id")
     idBinding = Binding {identifier="id", arguments=["a"], body=EVar "a"}
-    expectedType = TFun (TVar "t2") (TVar "t2")
+    expectedType = makeFun (TVar (tvs !! 2)) (TVar (tvs !! 2))
 
 -- | Check that binding groups containing more than a minimal set of mutually
 -- recursive definitions will unnecessarily restrict polymorphism.
@@ -44,9 +49,9 @@ testLargeBindingGroup :: Assertion
 testLargeBindingGroup = tiProgram defaultEnv program @?= expectedEnv
   where
     expectedEnv = TypeEnv (Map.fromList
-                  [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("id", toScheme $ TFun TInt TInt)
+                  [ ("+", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("f", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("id", toScheme $ makeFun tInt tInt)
                   ])
     program = [[ Binding {identifier="id", arguments=["a"], body=EVar "a"}
                , Binding {identifier="f", arguments=fArgs, body=fBody}
@@ -60,10 +65,11 @@ testSmallBindingGroup :: Assertion
 testSmallBindingGroup = tiProgram defaultEnv program @?= expectedEnv
   where
     expectedEnv = TypeEnv (Map.fromList
-                  [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))
+                  [ ("+", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("f", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("id", Scheme [tvs !! 1] tId)
                   ])
+    tId = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 1))
     program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]
               , [Binding {identifier="f", arguments=fArgs, body=fBody}]
               ]
@@ -74,10 +80,11 @@ testTiProgram :: Assertion
 testTiProgram = tiProgram defaultEnv program @?= expectedEnv
   where
     expectedEnv = TypeEnv (Map.fromList
-                  [ ("+", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("f", toScheme $ foldr TFun TInt [TInt, TInt])
-                  , ("id", Scheme ["t1"] (TFun (TVar "t1") (TVar "t1")))
+                  [ ("+", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("f", toScheme $ foldr makeFun tInt [tInt, tInt])
+                  , ("id", Scheme [tvs !! 1] tId)
                   ])
+    tId = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 1))
     program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]
               , [Binding {identifier="f", arguments=fArgs, body=fBody}]
               ]
