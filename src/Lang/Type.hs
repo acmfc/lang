@@ -6,7 +6,7 @@ unification code are based on:
 module Lang.Type where
 
 import Control.Exception.Base (assert)
-import Control.Monad (zipWithM_, ap)
+import Control.Monad (zipWithM, ap)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
@@ -75,16 +75,6 @@ instance Types Type where
     apply sub (TAp t1 t2) = TAp (apply sub t1) (apply sub t2)
     apply _ t = t
 
--- | Define a type scheme or polytype. Contains a type and a list of all
--- quantified type variables within the type.
-data Scheme = Scheme [Tyvar] Type
-    deriving (Show, Eq)
-
-instance Types Scheme where
-    ftv (Scheme us t) = Set.difference (ftv t) (Set.fromList us)
-    apply sub (Scheme us t) =
-        Scheme us (apply (foldr Map.delete sub us) t)
-
 instance Types a => Types [a] where
     ftv xs = foldr Set.union Set.empty (map ftv xs)
     apply sub = map (apply sub)
@@ -119,7 +109,39 @@ varBind u (TVar v) | u == v = return empty
 varBind u t
     | u `elem` typeVariables t =
         fail $ "Occurs check failed: " ++ show u ++ " occurs in " ++ show t
+    | kind u /= kind t =
+        fail $ concat [ "Kinds do not match: "
+                      , show u, " has kind ", show (kind u), ", "
+                      , show t, " has kind ", show (kind t)
+                      ]
     | otherwise = return $ singleton u t
+
+data Pred = Pred Type
+    deriving (Show, Eq, Ord)
+
+data Qual t = Qual [Pred] t
+    deriving (Show, Eq, Ord)
+
+instance Types Pred where
+    apply s (Pred t) = Pred (apply s t)
+    ftv (Pred t) = ftv t
+
+instance Types t => Types (Qual t) where
+    apply s (Qual ps t) = Qual (apply s ps) (apply s t)
+    ftv (Qual ps t) = Set.union (ftv ps) (ftv t)
+
+--unifierPred :: Pred -> Pred -> m Subst
+--unifierPred (Pred t1) (Pred t2) = unifier t1 t2
+
+-- | Define a type scheme or polytype. Contains a type and a list of all
+-- quantified type variables within the type.
+data Scheme = Scheme [Tyvar] (Qual Type)
+    deriving (Show, Eq)
+
+instance Types Scheme where
+    apply sub (Scheme tvs qt) =
+        Scheme tvs (apply (foldr Map.delete sub tvs) qt)
+    ftv (Scheme tvs t) = Set.difference (ftv t) (Set.fromList tvs)
 
 -- | Map term variables to type schemes.
 newtype TypeEnv = TypeEnv (Map.Map VariableName Scheme)
@@ -164,56 +186,60 @@ newTVar :: Kind -> TI Type
 newTVar k = TI (\s n -> (s, n + 1, TVar (Tyvar ("t" ++ show n) k)))
 
 -- | Quantify all type variables not free in the environment.
-gen :: TypeEnv -> Type -> Scheme
-gen env t = Scheme us t
-  where us = Set.toList (Set.difference (ftv t) (ftv env))
+gen :: TypeEnv -> Qual Type -> Scheme
+gen env qt = Scheme tvs qt
+  where tvs = Set.toList (Set.difference (ftv qt) (ftv env))
 
 -- | Instantiate quantified type variables in a type scheme with fresh type
 -- variables.
-inst :: Scheme -> TI Type
-inst (Scheme us t) = do ts <- mapM newTVar (map kind us)
-                        return $ apply (Map.fromList (zip us ts)) t
+inst :: Scheme -> TI (Qual Type)
+inst (Scheme tvs qt) = do ts <- mapM newTVar (map kind tvs)
+                          return $ apply (Map.fromList (zip tvs ts)) qt
 
-type Infer e t = TypeEnv -> e -> TI t
+type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
-tiLit :: Literal -> TI Type
-tiLit (LInt _) = return tInt
+tiLit :: Literal -> TI ([Pred], Type)
+tiLit (LInt _) = return ([], tInt)
 
 tiExpr :: Infer Expr Type
 tiExpr (TypeEnv env) (EVar x) = case Map.lookup x env of
     Nothing -> fail $ "Unbound variable: " ++ x
-    Just scheme -> inst scheme
+    Just scheme -> do Qual ps t <- inst scheme
+                      return (ps, t)
 tiExpr _ (ELit l) = tiLit l
 tiExpr env (EAp e1 e2) = do
-    te1 <- tiExpr env e1
-    te2 <- tiExpr env e2
+    (ps, te1) <- tiExpr env e1
+    (qs, te2) <- tiExpr env e2
     t <- newTVar KStar
     unify (makeFun te2 t) te1
-    return t
+    return (ps ++ qs, t)
 tiExpr (TypeEnv env) (ELet bg e) = do
-    TypeEnv env' <- tiBindingGroup (TypeEnv env) bg
-    tiExpr (TypeEnv (Map.union env' env)) e
+    (ps, TypeEnv env') <- tiBindingGroup (TypeEnv env) bg
+    (qs, t) <- tiExpr (TypeEnv (Map.union env' env)) e
+    return (ps ++ qs, t)
 
 -- | Creates a polytype from a monotype without any quantifiers.
 toScheme :: Type -> Scheme
-toScheme = Scheme []
+toScheme = Scheme [] . Qual []
 
 -- | Run type inference for the expression in a binding and unify it with t.
 -- Because t takes on the type of the expression, env should map b's identifier
 -- to t to allow for recursive bindings.
-tiBoundExpr :: TypeEnv -> Binding -> Type -> TI ()
+tiBoundExpr :: TypeEnv -> Binding -> Type -> TI [Pred]
 tiBoundExpr (TypeEnv env) b t = do
     -- Create a fresh type variable for each argument.
     targs <- mapM (const (newTVar KStar)) (arguments b)
     let schemes = map toScheme targs
         env' = Map.union (Map.fromList (zip (arguments b) schemes)) env
-    te <- tiExpr (TypeEnv env') (body b)
+    (ps, te) <- tiExpr (TypeEnv env') (body b)
     unify t $ foldr makeFun te targs
+    return ps
 
 -- | Run type inference for each binding in the binding group. Every expression
 -- within the group can see the instantiated type variables representing every
 -- other. In order to obtain the most general types, bg should be a minimal set
 -- of mutually recursive definitions.
+-- TODO Split predicates into deferred and retained predicates.
 tiBindingGroup :: Infer BindingGroup TypeEnv
 tiBindingGroup (TypeEnv env) bg = do
     -- Allocate a type variable for each binding.
@@ -224,27 +250,28 @@ tiBindingGroup (TypeEnv env) bg = do
         env' = Map.union (Map.fromList (zip identifiers schemes)) env
     -- Unify the type allocated for each binding with the type inferred for its
     -- expression.
-    zipWithM_ (tiBoundExpr (TypeEnv env')) bg ts
+    pss <- zipWithM (tiBoundExpr (TypeEnv env')) bg ts
     sub <- getSubst
-    let ts' = apply sub ts
+    let ps' = apply sub (concat pss)
+        ts' = apply sub ts
         -- Generalize all the types we found for the newly-bound names.
-        schemes' = map (gen (apply sub (TypeEnv env))) ts'
-    return . TypeEnv . Map.fromList $ zip identifiers schemes'
+        schemes' = map (gen (apply sub (TypeEnv env)) . Qual ps') ts'
+    return (ps', TypeEnv . Map.fromList $ zip identifiers schemes')
 
 -- | Enhance a type inferencer to run over a list rather than a single entity,
 -- accumulating an environment as it goes.
 tiSequence :: Infer a TypeEnv -> Infer [a] TypeEnv
-tiSequence _ env [] = return env
+tiSequence _ env [] = return ([], env)
 tiSequence ti (TypeEnv env) (x : xs) = do
-    TypeEnv env' <- ti (TypeEnv env) x
-    TypeEnv env'' <- tiSequence ti (TypeEnv (Map.union env' env)) xs
-    return . TypeEnv $ Map.union env'' env'
+    (ps, TypeEnv env') <- ti (TypeEnv env) x
+    (qs, TypeEnv env'') <- tiSequence ti (TypeEnv (Map.union env' env)) xs
+    return (ps ++ qs, TypeEnv $ Map.union env'' env')
 
 type Program = [BindingGroup]
 
 tiProgram :: TypeEnv -> Program -> TypeEnv
 tiProgram env bgs = runTI $ do
-    env' <- tiSequence tiBindingGroup env bgs
+    (_, env') <- tiSequence tiBindingGroup env bgs
     s <- getSubst
     return $ apply s env'
 

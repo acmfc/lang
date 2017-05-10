@@ -30,14 +30,23 @@ instance PrettyPrint Type where
             ppt1' = conditionalParens (isFunction t1') (prettyPrint t1')
         Nothing -> text "TAp" <+> prettyPrint t1 <+> prettyPrint t2
 
+instance PrettyPrint Pred where
+    prettyPrint (Pred t) = prettyPrint t
+
+instance PrettyPrint t => PrettyPrint (Qual t) where
+    prettyPrint (Qual ps t) = withPrefix $ prettyPrint t
+      where
+        withPrefix x = if not (null ps) then ppPreds <+> text "=>" <+> x else x
+        ppPreds = hsep (map prettyPrint ps)
+
 instance PrettyPrint Scheme where
-    prettyPrint (Scheme [] t) = prettyPrint t
-    prettyPrint (Scheme tvs t) = quantifiers <> text "." <+> prettyPrint t'
+    prettyPrint (Scheme [] qt) = prettyPrint qt
+    prettyPrint (Scheme tvs qt) = quantifiers <> text "." <+> prettyPrint qt'
       where
         quantifiers =
             text "forall" <+> (hcat . punctuate space) (map text tvns')
         tvns' = map (\(Tyvar tvn _) -> tvn) tvs'
-        Scheme tvs' t' = renameSchemeVariables (Scheme tvs t)
+        Scheme tvs' qt' = renameSchemeVariables (Scheme tvs qt)
 
 freshTypeVariableNames :: [TypeVariableName]
 freshTypeVariableNames = concatMap (\suffix -> map (: suffix) alphabet) suffixes
@@ -46,9 +55,9 @@ freshTypeVariableNames = concatMap (\suffix -> map (: suffix) alphabet) suffixes
     alphabet = "abcdefghijklmnopqrstuvwxyz"
 
 renameSchemeVariables :: Scheme -> Scheme
-renameSchemeVariables (Scheme tvs t) = Scheme renamedTvs t'
+renameSchemeVariables (Scheme tvs qt) = Scheme renamedTvs qt'
   where
-    t' = apply sub t
+    qt' = apply sub qt
     sub = Map.fromList $ zip tvs $ map TVar renamedTvs
     renamedTvs = map (\(tvn, k) -> Tyvar tvn k) (zip freshTypeVariableNames ks)
     ks = map (\(Tyvar _ k) -> k) tvs
