@@ -28,7 +28,7 @@ languageDef = Token.LanguageDef
     , Token.opStart = oneOf "~!@#$%^&*-=+.<>/?@\\|:"
     , Token.opLetter = oneOf "~!@#$%^&*-=+.<>/?@\\|:"
     , Token.reservedNames = ["let"]
-    , Token.reservedOpNames = ["="]
+    , Token.reservedOpNames = ["=", "@"]
     , Token.caseSensitive = True
     }
 
@@ -41,7 +41,16 @@ var = EVar <$> Token.identifier tokenParser
 
 -- | Literal value parser.
 literal :: Parser Expr
-literal = ELit . LInt <$> Token.integer tokenParser
+literal = int <|> constLabel
+
+int :: Parser Expr
+int = ELit . LInt <$> Token.integer tokenParser
+
+constLabel :: Parser Expr
+constLabel = do
+    _ <- Token.symbol tokenParser "@"
+    l <- Token.identifier tokenParser
+    return $ ELit . LLab $ l
 
 term :: Parser Expr
 term = var <|> literal

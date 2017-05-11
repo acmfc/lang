@@ -37,7 +37,7 @@ defaultEnv = TypeEnv (Map.fromList [("+", toScheme t)])
     t = makeFun tInt (makeFun tInt tInt)
 
 testTiExprId :: Assertion
-testTiExprId = runTI (tiExpr defaultEnv e) @?= expectedType
+testTiExprId = runTI (tiExpr defaultEnv e) @?= ([], expectedType)
   where
     e = ELet [idBinding] (EVar "id")
     idBinding = Binding {identifier="id", arguments=["a"], body=EVar "a"}
@@ -67,7 +67,7 @@ testSmallBindingGroup = tiProgram defaultEnv program @?= expectedEnv
     expectedEnv = TypeEnv (Map.fromList
                   [ ("+", toScheme $ foldr makeFun tInt [tInt, tInt])
                   , ("f", toScheme $ foldr makeFun tInt [tInt, tInt])
-                  , ("id", Scheme [tvs !! 1] tId)
+                  , ("id", Scheme [tvs !! 1] (Qual [] tId))
                   ])
     tId = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 1))
     program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]
@@ -82,7 +82,7 @@ testTiProgram = tiProgram defaultEnv program @?= expectedEnv
     expectedEnv = TypeEnv (Map.fromList
                   [ ("+", toScheme $ foldr makeFun tInt [tInt, tInt])
                   , ("f", toScheme $ foldr makeFun tInt [tInt, tInt])
-                  , ("id", Scheme [tvs !! 1] tId)
+                  , ("id", Scheme [tvs !! 1] (Qual [] tId))
                   ])
     tId = makeFun (TVar (tvs !! 1)) (TVar (tvs !! 1))
     program = [ [Binding {identifier="id", arguments=["a"], body=EVar "a"}]

@@ -11,15 +11,19 @@ class PrettyPrint p where
     prettyPrint :: p -> Doc
 
 extractFunctionType :: Type -> Maybe (Type, Type)
-extractFunctionType (TAp (TAp tycon t1) t2) | tycon == tArrow = Just (t1, t2)
+extractFunctionType (TAp (TAp tc t1) t2) | tc == tArrow = Just (t1, t2)
 extractFunctionType _ = Nothing
 
 isFunction :: Type -> Bool
 isFunction = isJust . extractFunctionType
 
 conditionalParens :: Bool -> Doc -> Doc
-conditionalParens True d = parens d
-conditionalParens False d = d
+conditionalParens True = parens
+conditionalParens False = id
+
+extractRecordType :: Type -> Maybe Type
+extractRecordType (TAp tc t) | tc == tRecordCon = Just t
+extractRecordType _ = Nothing
 
 instance PrettyPrint Type where
     prettyPrint (TVar (Tyvar tvn _)) = text tvn
@@ -28,10 +32,26 @@ instance PrettyPrint Type where
         Just (t1', t2') -> ppt1' <+> text "->" <+> prettyPrint t2'
           where
             ppt1' = conditionalParens (isFunction t1') (prettyPrint t1')
-        Nothing -> text "TAp" <+> prettyPrint t1 <+> prettyPrint t2
+        Nothing -> case extractRecordType t of
+            Just t' -> prettyPrint t'
+            Nothing -> prettyPrint t1 <+> prettyPrint t2
+
+-- TODO Rename row variables.
+instance PrettyPrint Row where
+    prettyPrint (RVar t) = prettyPrint t
+    prettyPrint (REmpty) = text "{}"
+    prettyPrint (RExt t1 t2 r) =
+        ppExt (prettyPrint t1) (prettyPrint t2) (prettyPrint r)
+          where
+            ppExt ppt1 ppt2 ppr =
+                braces $ ppt1 <+> text ":" <+> ppt2 <+> text "|" <+> ppr
 
 instance PrettyPrint Pred where
-    prettyPrint (Pred t) = prettyPrint t
+    prettyPrint (RowLacks t1 t2) = parens $ ppt1 <> text "\\" <> ppt2
+      where
+        ppt1 = prettyPrint t1
+        ppt2 = prettyPrint t2
+    prettyPrint (RowEq t1 t2) = prettyPrint t1 <> text "~" <> prettyPrint t2
 
 instance PrettyPrint t => PrettyPrint (Qual t) where
     prettyPrint (Qual ps t) = withPrefix $ prettyPrint t

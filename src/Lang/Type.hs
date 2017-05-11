@@ -37,6 +37,31 @@ tArrow = TCon (Tycon "(->)" (KFun KStar (KFun KStar KStar)))
 makeFun :: Type -> Type -> Type
 makeFun a b = TAp (TAp tArrow a) b
 
+tRecordCon :: Type
+tRecordCon = TCon (Tycon "{_}" (KFun KRow KStar))
+
+tVariantCon :: Type
+tVariantCon = TCon (Tycon "<_>" (KFun KRow KStar))
+
+tLabelCon :: Type
+tLabelCon = TCon (Tycon "Lab" (KFun KLab KStar))
+
+makeLabel :: VariableName -> Type
+makeLabel l = TAp tLabelCon (TCon (Tycon l KLab))
+
+-- Notes from fclabels:
+-- row variable: TVar (Tyvar "rowvarname" KRow)
+-- label constant: TCon (Tycon "labelname" KLab)
+-- label variable: TVar (Tyvar "labelvarname" KLab)
+-- row expressions r: RVar Tyvar | REmpty | RExt Type Type r
+-- kind r = KRow
+-- syntacticLabelEq (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) | name1 == name2 = True
+-- syntacticLabelEq _ _ = False
+--
+-- l \neq_c l^\prime
+-- constantLabelsDistinct (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) | name1 == name2 = True
+-- constantLabelsDistinct _ _ = False
+
 class HasKind t where
     kind :: t -> Kind
 
@@ -116,15 +141,28 @@ varBind u t
                       ]
     | otherwise = return $ singleton u t
 
-data Pred = Pred Type
+data Row = RVar Type | REmpty | RExt Type Type Row
     deriving (Show, Eq, Ord)
 
-data Qual t = Qual [Pred] t
+instance Types Row where
+    apply s (RVar t) = RVar (apply s t)
+    apply s (RExt t1 t2 r) = RExt (apply s t1) (apply s t2) (apply s r)
+    apply _ REmpty = REmpty
+    ftv (RVar t) = ftv t
+    ftv REmpty = Set.empty
+    ftv (RExt t1 t2 r) = ftv t1 `Set.union` ftv t2 `Set.union` ftv r
+
+data Pred = RowLacks Row Type | RowEq Row Row
     deriving (Show, Eq, Ord)
 
 instance Types Pred where
-    apply s (Pred t) = Pred (apply s t)
-    ftv (Pred t) = ftv t
+    apply s (RowLacks t1 t2) = RowLacks (apply s t1) (apply s t2)
+    apply s (RowEq t1 t2) = RowEq (apply s t1) (apply s t2)
+    ftv (RowLacks t1 t2) = Set.union (ftv t1) (ftv t2)
+    ftv (RowEq t1 t2) = Set.union (ftv t1) (ftv t2)
+
+data Qual t = Qual [Pred] t
+    deriving (Show, Eq, Ord)
 
 instance Types t => Types (Qual t) where
     apply s (Qual ps t) = Qual (apply s ps) (apply s t)
@@ -200,6 +238,7 @@ type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
 tiLit :: Literal -> TI ([Pred], Type)
 tiLit (LInt _) = return ([], tInt)
+tiLit (LLab l) = return ([], makeLabel l)
 
 tiExpr :: Infer Expr Type
 tiExpr (TypeEnv env) (EVar x) = case Map.lookup x env of
