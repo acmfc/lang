@@ -1,4 +1,4 @@
-module Lang.PrettyPrint where
+module Lang.PrettyPrint (printTypeEnv, prettyPrint) where
 
 import Text.PrettyPrint
 import Data.List (inits)
@@ -56,8 +56,11 @@ instance PrettyPrint Pred where
 instance PrettyPrint t => PrettyPrint (Qual t) where
     prettyPrint (Qual ps t) = withPrefix $ prettyPrint t
       where
-        withPrefix x = if not (null ps) then ppPreds <+> text "=>" <+> x else x
-        ppPreds = hsep (map prettyPrint ps)
+        withPrefix x =
+            if not (null predsToPrint) then ppPreds <+> text "=>" <+> x else x
+        predsToPrint = filter (not . isLacks) ps
+        isLacks p = case p of (RowLacks _ _) -> True; _ -> False
+        ppPreds = hsep (map prettyPrint predsToPrint)
 
 instance PrettyPrint Scheme where
     prettyPrint (Scheme [] qt) = prettyPrint qt
@@ -68,19 +71,34 @@ instance PrettyPrint Scheme where
         tvns' = map (\(Tyvar tvn _) -> tvn) tvs'
         Scheme tvs' qt' = renameSchemeVariables (Scheme tvs qt)
 
-freshTypeVariableNames :: [TypeVariableName]
-freshTypeVariableNames = concatMap (\suffix -> map (: suffix) alphabet) suffixes
+primedNames :: [Char] -> [TypeVariableName]
+primedNames alphabet = concatMap (\suffix -> map (: suffix) alphabet) suffixes
   where
     suffixes = inits $ cycle "'"
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+indexedNames :: Char -> [TypeVariableName]
+indexedNames c = (c : []) : map ((:) c . show) ([1..] :: [Integer])
 
 renameSchemeVariables :: Scheme -> Scheme
 renameSchemeVariables (Scheme tvs qt) = Scheme renamedTvs qt'
   where
     qt' = apply sub qt
-    sub = Map.fromList $ zip tvs $ map TVar renamedTvs
-    renamedTvs = map (\(tvn, k) -> Tyvar tvn k) (zip freshTypeVariableNames ks)
-    ks = map (\(Tyvar _ k) -> k) tvs
+    sub = sub1 `compose` sub2 `compose` sub3
+    sub1 = Map.fromList $ zip kstarTvs $ map TVar renamedKstarTvs
+    sub2 = Map.fromList $ zip klabTvs $ map TVar renamedKlabTvs
+    sub3 = Map.fromList $ zip krowTvs $ map TVar renamedKrowTvs
+    renamedTvs = renamedKstarTvs ++ renamedKlabTvs ++ renamedKrowTvs
+    renamedKstarTvs = renameTvs (primedNames "abcdefgh") kstarTvs
+    renamedKlabTvs = renameTvs (primedNames "lmno") klabTvs
+    renamedKrowTvs = renameTvs (indexedNames 'r') krowTvs
+    kstarTvs = filter (hasKind KStar) tvs
+    klabTvs = filter (hasKind KLab) tvs
+    krowTvs = filter (hasKind KRow) tvs
+    hasKind k (Tyvar _ k') = k == k'
+
+renameTvs :: [TypeVariableName] -> [Tyvar] -> [Tyvar]
+renameTvs newNames tvs =
+    map (\(name, Tyvar _ k) -> Tyvar name k) $ zip newNames tvs
 
 printTypeEnv :: TypeEnv -> [String]
 printTypeEnv (TypeEnv env) = map (\(name, scheme) ->
