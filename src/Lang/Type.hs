@@ -46,8 +46,8 @@ tVariantCon = TCon (Tycon "<_>" (KFun KRow KStar))
 tLabelCon :: Type
 tLabelCon = TCon (Tycon "Lab" (KFun KLab KStar))
 
-makeLabel :: VariableName -> Type
-makeLabel l = TAp tLabelCon (TCon (Tycon l KLab))
+makeLabelConst :: LabelName -> Type
+makeLabelConst l = TAp tLabelCon (TCon (Tycon l KLab))
 
 -- Notes from fclabels:
 -- row variable: TVar (Tyvar "rowvarname" KRow)
@@ -238,7 +238,7 @@ type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
 tiLit :: Literal -> TI ([Pred], Type)
 tiLit (LInt _) = return ([], tInt)
-tiLit (LLab l) = return ([], makeLabel l)
+tiLit (LLab l) = return ([], makeLabelConst l)
 
 tiExpr :: Infer Expr Type
 tiExpr (TypeEnv env) (EVar x) = case Map.lookup x env of

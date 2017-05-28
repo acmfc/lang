@@ -18,5 +18,7 @@ data Binding = Binding { identifier :: VariableName
 -- Binding in a BindingGroup depends on every other Binding in the group.
 type BindingGroup = [Binding]
 
-data Literal = LInt Integer | LLab VariableName
+type LabelName = String
+
+data Literal = LInt Integer | LLab LabelName
     deriving (Show, Eq)
