@@ -39,7 +39,7 @@ instance PrettyPrint Type where
 -- TODO Rename row variables.
 instance PrettyPrint Row where
     prettyPrint (RVar t) = prettyPrint t
-    prettyPrint (REmpty) = text "{}"
+    prettyPrint REmpty = text "{}"
     prettyPrint (RExt t1 t2 r) =
         ppExt (prettyPrint t1) (prettyPrint t2) (prettyPrint r)
           where
@@ -71,13 +71,13 @@ instance PrettyPrint Scheme where
         tvns' = map (\(Tyvar tvn _) -> tvn) tvs'
         Scheme tvs' qt' = renameSchemeVariables (Scheme tvs qt)
 
-primedNames :: [Char] -> [TypeVariableName]
+primedNames :: String -> [TypeVariableName]
 primedNames alphabet = concatMap (\suffix -> map (: suffix) alphabet) suffixes
   where
     suffixes = inits $ cycle "'"
 
 indexedNames :: Char -> [TypeVariableName]
-indexedNames c = (c : []) : map ((:) c . show) ([1..] :: [Integer])
+indexedNames c = [c] : map ((:) c . show) ([1..] :: [Integer])
 
 renameSchemeVariables :: Scheme -> Scheme
 renameSchemeVariables (Scheme tvs qt) = Scheme renamedTvs qt'

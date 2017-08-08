@@ -1,24 +1,31 @@
 module Lang.Core where
 
-type VariableName = String
+import Control.Comonad.Cofree
 
-data Expr = EVar VariableName
+import Lang.Identifier
+
+-- | An expression where every binding is annotated with a.
+data ExprF a b = EVar VariableName
     | ELit Literal
-    | EAp Expr Expr
-    | ELet BindingGroup Expr
+    | EAp b b
+    | ELet (BindingGroup a b) b
     deriving (Show, Eq)
 
--- | Represents a single variable or function binding.
-data Binding = Binding { identifier :: VariableName
-                       , arguments :: [VariableName]
-                       , body :: Expr
-                       } deriving (Show, Eq)
+type Expr a b = Cofree (ExprF a) b
 
--- | Represents a minimal set of mutually recursive bindings, i.e. every
--- Binding in a BindingGroup depends on every other Binding in the group.
-type BindingGroup = [Binding]
+-- | A single variable or function binding.
+data Binding a b = Binding { identifier :: VariableName
+                           , arguments :: [VariableName]
+                           , body :: b
+                           , annot :: a
+                           } deriving (Show, Eq)
 
-type LabelName = String
+-- | A minimal set of mutually recursive bindings, i.e. every Binding in a
+-- BindingGroup depends on every other Binding in the group.
+type BindingGroup a b = [Binding a b]
+
+type Program a b = [BindingGroup a b]
 
 data Literal = LInt Integer | LLab LabelName
     deriving (Show, Eq)
+

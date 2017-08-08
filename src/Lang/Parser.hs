@@ -1,5 +1,6 @@
 module Lang.Parser
-    ( var
+    ( typ
+    , var
     , literal
     , application
     , expr
@@ -9,12 +10,60 @@ module Lang.Parser
     , parseProgram
     ) where
 
+import Control.Comonad.Cofree
+import Data.Char (isUpper)
 import Data.Functor.Identity
 import Text.Parsec
 import Text.Parsec.String
 import qualified Text.Parsec.Token as Token
 
 import Lang.Core
+import Lang.Identifier
+import qualified Lang.Type as T
+
+-- | Defines token rules for the type language
+typeLanguageDef :: Token.LanguageDef ()
+typeLanguageDef = Token.LanguageDef
+    { Token.commentStart = ""
+    , Token.commentEnd = ""
+    , Token.commentLine = ""
+    , Token.nestedComments = False
+    , Token.identStart = letter <|> char '_'
+    , Token.identLetter = alphaNum <|> char '_'
+    , Token.opStart = oneOf ".=->()"
+    , Token.opLetter = oneOf ".=->()"
+    , Token.reservedNames = ["forall"]
+    , Token.reservedOpNames = [".", "->", "(", ")"]
+    , Token.caseSensitive = True
+    }
+
+typeTokenParser :: Token.GenTokenParser String () Identity
+typeTokenParser = Token.makeTokenParser typeLanguageDef
+
+isTypeConstructor :: String -> Bool
+isTypeConstructor [] = False
+isTypeConstructor (c : _) = isUpper c
+
+tAtom :: Parser T.Type
+tAtom = do
+    i <- Token.identifier typeTokenParser
+    if isTypeConstructor i then return $ T.TCon $ T.Tycon i T.KStar
+    else return $ T.TVar $ T.Tyvar i T.KStar
+
+tFunction :: Parser T.Type
+tFunction = do
+    left <- try $ do
+        left <- Token.parens typeTokenParser typ' <|> tAtom
+        _ <- Token.symbol typeTokenParser "->"
+        return left
+    right <- typ'
+    return $ T.makeFun left right
+
+typ' :: Parser T.Type
+typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tAtom
+
+typ :: Parser T.Scheme
+typ = T.genEmptyEnv . T.Qual [] <$> typ'
 
 -- | Defines token rules for the language.
 languageDef :: Token.LanguageDef ()
@@ -27,62 +76,83 @@ languageDef = Token.LanguageDef
     , Token.identLetter = alphaNum <|> char '_'
     , Token.opStart = oneOf "~!@#$%^&*-=+.<>/?@\\|:"
     , Token.opLetter = oneOf "~!@#$%^&*-=+.<>/?@\\|:"
-    , Token.reservedNames = ["let"]
-    , Token.reservedOpNames = ["=", "@"]
+    , Token.reservedNames = ["val", "let", "fn"]
+    , Token.reservedOpNames = ["=", "@", "->"]
     , Token.caseSensitive = True
     }
+
+type SyntacticExpr = Expr (Maybe T.Scheme) ()
 
 tokenParser :: Token.GenTokenParser String () Identity
 tokenParser = Token.makeTokenParser languageDef
 
 -- | Variable parser.
-var :: Parser Expr
-var = EVar <$> Token.identifier tokenParser
+var :: Parser SyntacticExpr
+var = (() :<) . EVar <$> Token.identifier tokenParser
 
 -- | Literal value parser.
-literal :: Parser Expr
+literal :: Parser SyntacticExpr
 literal = int <|> constLabel
 
-int :: Parser Expr
-int = ELit . LInt <$> Token.integer tokenParser
+int :: Parser SyntacticExpr
+int = (() :<) . ELit . LInt <$> Token.integer tokenParser
 
-constLabel :: Parser Expr
+constLabel :: Parser SyntacticExpr
 constLabel = do
     _ <- Token.symbol tokenParser "@"
     l <- Token.identifier tokenParser
-    return $ ELit . LLab $ l
+    return $ (() :<) . ELit . LLab $ l
 
-term :: Parser Expr
+term :: Parser SyntacticExpr
 term = var <|> literal
 
 -- | Function application parser.
-application :: Parser Expr
-application = Token.lexeme tokenParser $ chainl1 expr' (return EAp)
+application :: Parser SyntacticExpr
+application = Token.lexeme tokenParser $ chainl1 expr' f
+  where
+    f = return (\e1 e2 -> () :< EAp e1 e2)
+    --Token.lexeme tokenParser $ chainl1 expr' (return ((() :<) . EAp))
 
 -- | Expression parser.
-expr :: Parser Expr
+expr :: Parser SyntacticExpr
 expr = application <|> term
 
 -- | Parser for expressions that can be found in a function application.
 -- Further applications must be enclosed in parentheses to avoid infinite
 -- recursion.
-expr' :: Parser Expr
+expr' :: Parser SyntacticExpr
 expr' = Token.parens tokenParser application <|> term
 
+-- | Type declaration using val.
+valtype :: Parser (VariableName, T.Scheme)
+valtype = do
+    _ <- Token.reserved tokenParser "val"
+    boundId <- Token.identifier tokenParser
+    _ <- Token.symbol tokenParser ":"
+    t <- typ
+    return (boundId, t)
+
 -- | Let binding parser.
-binding :: Parser Binding
+binding :: Parser (Binding (Maybe T.Scheme) SyntacticExpr)
 binding = do
+    decl <- optionMaybe valtype
+    let t = fmap snd decl
     _ <- Token.reserved tokenParser "let"
     boundId <- Token.identifier tokenParser
     args <- many $ Token.identifier tokenParser
     _ <- Token.symbol tokenParser "="
     e <- expr
-    return $ Binding {identifier = boundId, arguments = args, body = e}
+    return Binding { identifier = boundId
+                   , arguments = args
+                   , body = e
+                   , annot = t
+                   }
 
 -- | Parser for a program as a sequence of bindings.
-program :: Parser BindingGroup
+program :: Parser (BindingGroup (Maybe T.Scheme) SyntacticExpr)
 program = many binding
 
-parseProgram :: String -> Either ParseError BindingGroup
+parseProgram :: String ->
+    Either ParseError (BindingGroup (Maybe T.Scheme) SyntacticExpr)
 parseProgram = parse program ""
 

@@ -4,27 +4,31 @@ Implements function-level dependency analysis.
 
 module Lang.DependencyAnalysis where
 
+import Control.Comonad.Cofree
 import qualified Data.Graph as Graph
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+import Lang.Identifier
 import Lang.Core
 
 -- | Find all VariableNames referenced in an Expr.
-exprDependencies :: Expr -> Set.Set VariableName -> Set.Set VariableName
-exprDependencies (EVar x) ignore | Set.member x ignore = Set.empty
-                                 | otherwise = Set.singleton x
-exprDependencies (ELit _) _ = Set.empty
-exprDependencies (EAp e1 e2) ignore =
+exprDependencies :: Expr a b
+                 -> Set.Set VariableName
+                 -> Set.Set VariableName
+exprDependencies (_ :< EVar x) ignore | Set.member x ignore = Set.empty
+                                      | otherwise = Set.singleton x
+exprDependencies (_ :< ELit _) _ = Set.empty
+exprDependencies (_ :< EAp e1 e2) ignore =
     Set.union (exprDependencies e1 ignore) (exprDependencies e2 ignore)
-exprDependencies (ELet bg e) ignore = Set.union bgDeps eDeps
+exprDependencies (_ :< ELet bg e) ignore = Set.union bgDeps eDeps
   where
-    bgDeps = Set.unions $ map (flip bindingDependencies boundNames) bg
+    bgDeps = Set.unions $ map (`bindingDependencies` boundNames) bg
     eDeps = exprDependencies e (Set.union ignore boundNames)
     boundNames = Set.fromList (map identifier bg)
 
 -- | Find all VariableNames referenced in a Binding.
-bindingDependencies :: Binding -> Set.Set VariableName -> Set.Set VariableName
+bindingDependencies :: Binding a (Expr a b) -> Set.Set VariableName -> Set.Set VariableName
 bindingDependencies b ignore = exprDependencies (body b) ignore'
   where
     ignore' = Set.union (Set.fromList (identifier b : arguments b)) ignore
@@ -46,12 +50,12 @@ bindingDependencies b ignore = exprDependencies (body b) ignore'
 -- | Represents a strongly connected component in the Binding dependency graph.
 -- Contains a list of nodes where each node contains a Binding, a key that
 -- uniquely identifies that Binding, and a list of dependencies.
-type Scc = [(Binding, VariableName, [VariableName])]
+type Scc a b = [(Binding a b, VariableName, [VariableName])]
 
 -- | Build a dependency graph from a list of bindings and return a list of
 -- strongly connected components, so that each component represents a minimal
 -- binding group.
-minimalBindingGroups :: [Binding] -> [Scc]
+minimalBindingGroups :: [Binding a (Expr a b)] -> [Scc a (Expr a b)]
 minimalBindingGroups bs = map Graph.flattenSCC sccs
   where
     sccs = Graph.stronglyConnCompR adjacencyList
@@ -63,10 +67,10 @@ type BindingGroupId = Int
 -- | Describes an intermediate stage between a Binding dependency graph and a
 -- BindingGroup dependency graph. LabeledSccs are constructed from the former
 -- and used to construct the latter.
-type LabeledScc = (Scc, BindingGroupId)
+type LabeledScc a b = (Scc a b, BindingGroupId)
 
 -- | Assign an arbitrary BindingGroupId to each Scc.
-labelSccs :: [Scc] -> [LabeledScc]
+labelSccs :: [Scc a (Expr a b)] -> [LabeledScc a (Expr a b)]
 labelSccs sccs = zip sccs [0..]
 
 -- | Maps a VariableName to the BindingGroupId for the BindingGroup in which it
@@ -75,7 +79,7 @@ type BindingGroupIdMap = Map.Map VariableName BindingGroupId
 
 -- | Collect all names bound in an Scc and map them to the BindingGroupId
 -- allocated to that Scc.
-makeBindingGroupIdMap :: LabeledScc -> BindingGroupIdMap
+makeBindingGroupIdMap :: LabeledScc a (Expr a b) -> BindingGroupIdMap
 makeBindingGroupIdMap (scc, n) = Map.fromList assocList
   where
     assocList = zip (boundNames scc) (repeat n)
@@ -87,15 +91,18 @@ makeBindingGroupIdMap (scc, n) = Map.fromList assocList
 lookupBindingGroupDependencies ::
     [VariableName] -> BindingGroupIdMap -> [BindingGroupId]
 lookupBindingGroupDependencies vns bindingGroupIdMap =
-    foldr (\vn bgids -> case (Map.lookup vn bindingGroupIdMap) of
+    foldr (\vn bgids -> case Map.lookup vn bindingGroupIdMap of
             Just bgid -> bgid : bgids
             Nothing -> bgids) [] vns
 
-type BindingGroupDepNode = (BindingGroup, BindingGroupId, [BindingGroupId])
+type BindingGroupDepNode a b =
+    (BindingGroup a b, BindingGroupId, [BindingGroupId])
 
 -- | Convert a node in the Binding dependency graph to one in the BindingGroup
 -- dependency graph.
-makeBindingGroupDepNode :: BindingGroupIdMap -> LabeledScc -> BindingGroupDepNode
+makeBindingGroupDepNode :: BindingGroupIdMap
+                        -> LabeledScc a (Expr a b)
+                        -> BindingGroupDepNode a (Expr a b)
 makeBindingGroupDepNode bindingGroupIdMap (scc, n) =
     (bg, n, bindingGroupDependencies)
       where
@@ -104,10 +111,11 @@ makeBindingGroupDepNode bindingGroupIdMap (scc, n) =
             lookupBindingGroupDependencies (concat vnss) bindingGroupIdMap
 
 -- | Construct a BindingGroup dependency graph from a Binding dependency graph.
-makeBindingGroupDepGraph :: [Scc] -> ( Graph.Graph
-                                     , Graph.Vertex -> BindingGroupDepNode
-                                     , BindingGroupId -> Maybe Graph.Vertex
-                                     )
+makeBindingGroupDepGraph :: [Scc a (Expr a b)] ->
+    ( Graph.Graph
+    , Graph.Vertex -> BindingGroupDepNode a (Expr a b)
+    , BindingGroupId -> Maybe Graph.Vertex
+    )
 makeBindingGroupDepGraph sccs = Graph.graphFromEdges nodes
   where
     nodes = map (makeBindingGroupDepNode bindingGroupIdMap) labeledSccs
@@ -118,9 +126,9 @@ makeBindingGroupDepGraph sccs = Graph.graphFromEdges nodes
 -- resulting BindingGroups, ordered so that each element in the list depends
 -- only on those before it.
 orderBindingGroups :: ( Graph.Graph
-                      , Graph.Vertex -> BindingGroupDepNode
+                      , Graph.Vertex -> BindingGroupDepNode a (Expr a b)
                       , BindingGroupId -> Maybe Graph.Vertex
-                      ) -> [BindingGroup]
+                      ) -> [BindingGroup a (Expr a b)]
 orderBindingGroups (graph, vertexToNode, _) =
     map (extractBindingGroups . vertexToNode) orderedVertices
       where
@@ -130,6 +138,7 @@ orderBindingGroups (graph, vertexToNode, _) =
 -- | Arrange a list of Bindings into a list of BindingGroups so that each
 -- BindingGroup contains a minimal set of mutually recursive Bindings and
 -- depends only on those that come before it in the resulting list.
-structureBindings :: [Binding] -> [BindingGroup]
+structureBindings :: [Binding a (Expr a b)] -> [BindingGroup a (Expr a b)]
 structureBindings =
     orderBindingGroups . makeBindingGroupDepGraph . minimalBindingGroups
+
