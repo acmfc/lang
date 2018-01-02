@@ -19,6 +19,7 @@ library
   hs-source-dirs:       src
   exposed-modules:      Lang.Core,
                         Lang.DependencyAnalysis,
+                        Lang.Expr,
                         Lang.Identifier,
                         Lang.PrettyPrint,
                         Lang.Type,
@@ -38,6 +39,7 @@ executable lang
   main-is:              Main.hs
   other-modules:        Lang.Core,
                         Lang.DependencyAnalysis,
+                        Lang.Expr,
                         Lang.Identifier,
                         Lang.PrettyPrint,
                         Lang.Type,
@@ -60,6 +62,7 @@ test-suite lang-tests
   other-modules:        Lang.Type.Tests,
                         Lang.TypeInference.Tests,
                         Lang.DependencyAnalysis.Tests,
+                        Lang.Expr,
                         Lang.Parser.Tests,
                         Lang.Core,
                         Lang.DependencyAnalysis,

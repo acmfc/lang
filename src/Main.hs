@@ -38,8 +38,9 @@ main :: IO ()
 main = case parseProgram exampleProgram of
     Left err -> putStrLn $ "Parse error: " ++ show err
     --Right ast -> putStrLn $ show ast
-    Right ast -> do
-        let (_, typeEnv) = tiProgram initialTypeEnv (structureBindings ast)
-        putStrLn "Demo program was successfully type-checked:"
-        mapM_ putStrLn $ printTypeEnv typeEnv
+    Right ast -> case tiProgram initialTypeEnv (structureBindings ast) of
+        Left err -> putStrLn $ "Type inference error: " ++ show err
+        Right (_, typeEnv) -> do
+            putStrLn "Demo program was successfully type-checked:"
+            mapM_ putStrLn $ printTypeEnv typeEnv
 

@@ -1,76 +1,86 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Lang.TypeInference where
 
 import Control.Comonad.Cofree
-import Control.Monad (zipWithM, ap)
+import Control.Monad (zipWithM)
 import Control.Monad.State
+import Control.Monad.Except
 import Data.Either (partitionEithers)
 import qualified Data.Map as Map
 
 import Lang.Core
+import Lang.Expr
 import Lang.Type
 
 -- | Compute the most general unifier of two types.
-unifier :: Monad m => Type -> Type -> m Subst
+unifier :: MonadError InferenceError m => Type -> Type -> m Subst
 unifier (TAp t1 t2) (TAp t1' t2') = do
-    sub1 <- unifier t1 t1'
-    sub2 <- unifier (apply sub1 t2) (apply sub1 t2')
-    return $ compose sub2 sub1
+    s1 <- unifier t1 t1'
+    s2 <- unifier (apply s1 t2) (apply s1 t2')
+    return $ compose s2 s1
 unifier (TVar u) t = varBind u t
 unifier t (TVar u) = varBind u t
 unifier t1 t2
     | t1 == t2 = return empty
-    | otherwise = fail $ "Types do not unify: " ++ show t1 ++ ", " ++ show t2
+    | otherwise = throwError . InferenceError $ msg
+      where
+        msg = "Types do not unify: " ++ show t1 ++ ", " ++ show t2
 
 -- | Create a substitution mapping a Tyvar to a Type after performing an occurs
 -- check.
-varBind :: Monad m => Tyvar -> Type -> m Subst
+varBind :: MonadError InferenceError m => Tyvar -> Type -> m Subst
 varBind u (TVar v) | u == v = return empty
 varBind u t
-    | u `elem` typeVariables t =
-        fail $ "Occurs check failed: " ++ show u ++ " occurs in " ++ show t
-    | kind u /= kind t =
-        fail $ concat [ "Kinds do not match: "
-                      , show u, " has kind ", show (kind u), ", "
-                      , show t, " has kind ", show (kind t)
-                      ]
+    | u `elem` typeVariables t = throwError . InferenceError $ occursErr
+    | kind u /= kind t = throwError . InferenceError $ kindErr
     | otherwise = return $ singleton u t
+      where
+        occursErr = "Occurs check failed: " ++ show u ++ " occurs in " ++ show t
+        kindErr = concat [ "Kinds do not match: "
+                         , show u, " has kind ", show (kind u), ", "
+                         , show t, " has kind ", show (kind t)
+                         ]
 
--- | Define a monad to track the state of the substitution and a counter for
--- generating type variable names.
-newtype TI a = TI (Subst -> Int -> (Subst, Int, a))
+data InferenceState = InferenceState { sub :: Subst
+                                     , counter :: Int
+                                     }
 
-instance Functor TI where
-    fmap f (TI g) = TI (\s n -> let (s', m, x) = g s n in (s', m, f x))
+newtype InferenceError = InferenceError String
+    deriving Eq
 
-instance Applicative TI where
-    pure = return
-    (<*>) = ap
+instance Show InferenceError where
+    show (InferenceError s) = s
 
--- TODO Implement fail.
-instance Monad TI where
-    return x = TI (\s n -> (s, n, x))
-    TI f >>= g = TI (\s n -> case f s n of
-        (s', m, x) -> let TI gx = g x in gx s' m)
+type TI a = ExceptT InferenceError (State InferenceState) a
 
-runTI :: TI a -> a
-runTI (TI f) = x where (_, _, x) = f empty 0
+runTI :: TI a -> Either InferenceError a
+runTI ti = evalState (runExceptT ti) initState
+  where
+    initState = InferenceState { sub = empty, counter = 0 }
 
 getSubst :: TI Subst
-getSubst = TI (\s n -> (s, n, s))
+getSubst = fmap sub get
 
 extendSubst :: Subst -> TI ()
-extendSubst s = TI (\s' n -> (compose s s', n, ()))
+extendSubst s = do
+     st <- get
+     put $ st { sub = compose s $ sub st }
 
 unify :: Type -> Type -> TI ()
-unify t1 t2 = do sub <- getSubst
-                 u <- unifier (apply sub t1) (apply sub t2)
+unify t1 t2 = do s <- getSubst
+                 u <- unifier (apply s t1) (apply s t2)
                  extendSubst u
 
 -- TODO Use a distinctive symbol so the pretty printer can determine whether a
 -- type variable was provided by a user annotation. Alternatively make type
 -- variable names a sum type.
 newTVar :: Kind -> TI Type
-newTVar k = TI (\s n -> (s, n + 1, TVar (Tyvar ("t" ++ show n) k)))
+newTVar k = do
+    st <- get
+    let n = counter st
+    put st { counter = n + 1 }
+    return $ TVar (Tyvar ("t" ++ show n) k)
 
 -- | Instantiate quantified type variables in a type scheme with fresh type
 -- variables.
@@ -84,9 +94,9 @@ tiLit :: Literal -> TI ([Pred], Type)
 tiLit (LInt _) = return ([], tInt)
 tiLit (LLab l) = return ([], makeLabelConst l)
 
-tiExpr :: Infer (Expr (Maybe Scheme) ()) Type
+tiExpr :: Infer SyntacticExpr Type
 tiExpr (TypeEnv env) (_ :< EVar x) = case Map.lookup x env of
-    Nothing -> fail $ "Unbound variable: " ++ x
+    Nothing -> throwError . InferenceError $ "Unbound variable: " ++ x
     Just scheme -> do Qual ps t <- inst scheme
                       return (ps, t)
 tiExpr _ (_ :< ELit l) = tiLit l
@@ -104,7 +114,10 @@ tiExpr (TypeEnv env) (_ :< ELet bg e) = do
 -- | Run type inference for the expression in a binding and unify it with t.
 -- Because t takes on the type of the expression, env should map b's identifier
 -- to t to allow for recursive bindings.
-tiBoundExpr :: TypeEnv -> Binding a (Expr (Maybe Scheme) ()) -> Type -> TI [Pred]
+tiBoundExpr :: TypeEnv
+            -> Binding a SyntacticExpr
+            -> Type
+            -> TI [Pred]
 tiBoundExpr (TypeEnv env) b t = do
     -- Create a fresh type variable for each argument.
     targs <- mapM (const (newTVar KStar)) (arguments b)
@@ -116,11 +129,11 @@ tiBoundExpr (TypeEnv env) b t = do
 
 equivalentTypes :: Type -> Type -> State Subst Bool
 equivalentTypes (TVar tyv1) (TVar tyv2) = do
-    sub <- get
-    case Map.lookup tyv1 sub of
+    s <- get
+    case Map.lookup tyv1 s of
         Just t -> return $ t == TVar tyv2
         Nothing -> do
-            put $ Map.insert tyv1 (TVar tyv2) sub
+            put $ Map.insert tyv1 (TVar tyv2) s
             return True
 equivalentTypes (TAp t1 t2) (TAp t1' t2') = do
     b1 <- equivalentTypes t1 t1'
@@ -156,12 +169,12 @@ equivalentQuals (Qual ps1 t1) (Qual ps2 t2) = do
 
 equivalentTyvars :: Tyvar -> Tyvar -> State Subst Bool
 equivalentTyvars tyv1 tyv2 = do
-    sub <- get
-    case Map.lookup tyv1 sub of
+    s <- get
+    case Map.lookup tyv1 s of
         Just (TVar tyv2') -> return $ tyv2 == tyv2'
         Just _ -> return False
         Nothing -> do
-            put $ Map.insert tyv1 (TVar tyv2) sub
+            put $ Map.insert tyv1 (TVar tyv2) s
             return True
 
 -- | Returns True if there is a substitution mapping the first argument to the
@@ -173,25 +186,26 @@ equivalentSchemes (Scheme tyvs1 qt1) (Scheme tyvs2 qt2) = do
     return $ and b1s && b2
 
 -- TODO Split predicates into deferred and retained predicates.
-tiExplBinding :: TypeEnv -> Binding Scheme (Expr (Maybe Scheme) ()) -> TI [Pred]
+tiExplBinding :: TypeEnv -> Binding Scheme SyntacticExpr -> TI [Pred]
 tiExplBinding (TypeEnv env) b = do
     let schemeAnnot = annot b
     Qual qs t <- inst schemeAnnot
     ps <- tiBoundExpr (TypeEnv env) b t
-    sub <- getSubst
-    let qs' = apply sub qs
-        t' = apply sub t
-        schemeInferred = gen (apply sub (TypeEnv env)) (Qual qs' t')
-    let (equivalent, _) = runState (equivalentSchemes schemeInferred schemeAnnot) empty
-    if not equivalent then fail "signature too general"
-    else return $ apply sub ps
+    s <- getSubst
+    let qs' = apply s qs
+        t' = apply s t
+        schemeInferred = gen (apply s (TypeEnv env)) (Qual qs' t')
+    let st = equivalentSchemes schemeInferred schemeAnnot
+        equivalent = evalState st empty
+    if not equivalent then throwError . InferenceError $ "signature too general"
+    else return $ apply s ps
 
 -- | Run type inference for each binding in the binding group. Every expression
 -- within the group can see the instantiated type variables representing every
 -- other.
 -- TODO Split predicates into deferred and retained predicates.
 -- TODO Implement the monomorphism restriction.
-tiImplBindingGroup :: Infer (BindingGroup () (Expr (Maybe Scheme) ())) TypeEnv
+tiImplBindingGroup :: Infer (BindingGroup () SyntacticExpr) TypeEnv
 tiImplBindingGroup (TypeEnv env) bg = do
     -- Allocate a type variable for each binding.
     ts <- mapM (const (newTVar KStar)) bg
@@ -202,14 +216,14 @@ tiImplBindingGroup (TypeEnv env) bg = do
     -- Unify the type allocated for each binding with the type inferred for its
     -- expression.
     pss <- zipWithM (tiBoundExpr (TypeEnv env')) bg ts
-    sub <- getSubst
-    let ps' = apply sub (concat pss)
-        ts' = apply sub ts
+    s <- getSubst
+    let ps' = apply s (concat pss)
+        ts' = apply s ts
         -- Generalize all the types we found for the newly-bound names.
-        schemes' = map (gen (apply sub (TypeEnv env)) . Qual ps') ts'
+        schemes' = map (gen (apply s (TypeEnv env)) . Qual ps') ts'
     return (ps', TypeEnv . Map.fromList $ zip identifiers schemes')
 
-tiBindingGroup :: Infer (BindingGroup (Maybe Scheme) (Expr (Maybe Scheme) ())) TypeEnv
+tiBindingGroup :: Infer (BindingGroup (Maybe Scheme) SyntacticExpr) TypeEnv
 tiBindingGroup (TypeEnv env) bg = do
     let (es, is) = partitionByAnnotation bg
         TypeEnv env' = envFromExplBindingGroup es
@@ -218,16 +232,16 @@ tiBindingGroup (TypeEnv env) bg = do
     qss <- mapM (tiExplBinding fullEnv) es
     return (ps ++ concat qss, TypeEnv $ Map.union env'' env')
 
-envFromExplBindingGroup :: BindingGroup Scheme (Expr (Maybe Scheme) ()) -> TypeEnv
+envFromExplBindingGroup :: BindingGroup Scheme SyntacticExpr -> TypeEnv
 envFromExplBindingGroup bg = TypeEnv $ foldr addAnnot Map.empty annotPairs
   where
     addAnnot (v, schema) = Map.insert v schema
     annotPairs =
         [(v, schema) | Binding { identifier = v, annot = schema } <- bg]
 
-partitionByAnnotation :: BindingGroup (Maybe Scheme) (Expr (Maybe Scheme) ())
-                      -> ( BindingGroup Scheme (Expr (Maybe Scheme) ())
-                         , BindingGroup () (Expr (Maybe Scheme) ())
+partitionByAnnotation :: BindingGroup (Maybe Scheme) SyntacticExpr
+                      -> ( BindingGroup Scheme SyntacticExpr
+                         , BindingGroup () SyntacticExpr
                          )
 partitionByAnnotation = partitionEithers . map f
   where
@@ -244,7 +258,8 @@ tiSequence ti (TypeEnv env) (x : xs) = do
     return (ps ++ qs, TypeEnv $ Map.union env'' env')
 
 -- TODO Deal with ambiguities and defaults.
-tiProgram :: TypeEnv -> Program (Maybe Scheme) (Expr (Maybe Scheme) ()) -> ([Pred], TypeEnv)
+tiProgram :: TypeEnv -> Program (Maybe Scheme) SyntacticExpr ->
+    Either InferenceError ([Pred], TypeEnv)
 tiProgram env bgs = runTI $ do
     (ps, env') <- tiSequence tiBindingGroup env bgs
     s <- getSubst

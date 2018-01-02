@@ -27,6 +27,9 @@ data Tyvar = Tyvar TypeVariableName Kind
 data Tycon = Tycon String Kind
     deriving (Show, Eq, Ord)
 
+tUnit :: Type
+tUnit = TCon (Tycon "Unit" KStar)
+
 tInt :: Type
 tInt = TCon (Tycon "Int" KStar)
 
@@ -54,11 +57,13 @@ makeLabelConst l = TAp tLabelCon (TCon (Tycon l KLab))
 -- label variable: TVar (Tyvar "labelvarname" KLab)
 -- row expressions r: RVar Tyvar | REmpty | RExt Type Type r
 -- kind r = KRow
--- syntacticLabelEq (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) | name1 == name2 = True
+-- syntacticLabelEq (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) |
+--     name1 == name2 = True
 -- syntacticLabelEq _ _ = False
 --
 -- l \neq_c l^\prime
--- constantLabelsDistinct (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) | name1 == name2 = True
+-- constantLabelsDistinct (TCon (Tycon name1 KLab)) (TCon (Tycon name2 KLab)) |
+--     name1 == name2 = True
 -- constantLabelsDistinct _ _ = False
 
 class HasKind t where

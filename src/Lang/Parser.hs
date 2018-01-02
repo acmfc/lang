@@ -10,7 +10,6 @@ module Lang.Parser
     , parseProgram
     ) where
 
-import Control.Comonad.Cofree
 import Data.Char (isUpper)
 import Data.Functor.Identity
 import Text.Parsec
@@ -18,6 +17,7 @@ import Text.Parsec.String
 import qualified Text.Parsec.Token as Token
 
 import Lang.Core
+import Lang.Expr
 import Lang.Identifier
 import qualified Lang.Type as T
 
@@ -81,27 +81,25 @@ languageDef = Token.LanguageDef
     , Token.caseSensitive = True
     }
 
-type SyntacticExpr = Expr (Maybe T.Scheme) ()
-
 tokenParser :: Token.GenTokenParser String () Identity
 tokenParser = Token.makeTokenParser languageDef
 
 -- | Variable parser.
 var :: Parser SyntacticExpr
-var = (() :<) . EVar <$> Token.identifier tokenParser
+var = evar <$> Token.identifier tokenParser
 
 -- | Literal value parser.
 literal :: Parser SyntacticExpr
 literal = int <|> constLabel
 
 int :: Parser SyntacticExpr
-int = (() :<) . ELit . LInt <$> Token.integer tokenParser
+int = elit . LInt <$> Token.integer tokenParser
 
 constLabel :: Parser SyntacticExpr
 constLabel = do
     _ <- Token.symbol tokenParser "@"
     l <- Token.identifier tokenParser
-    return $ (() :<) . ELit . LLab $ l
+    return $ elit . LLab $ l
 
 term :: Parser SyntacticExpr
 term = var <|> literal
@@ -110,8 +108,8 @@ term = var <|> literal
 application :: Parser SyntacticExpr
 application = Token.lexeme tokenParser $ chainl1 expr' f
   where
-    f = return (\e1 e2 -> () :< EAp e1 e2)
-    --Token.lexeme tokenParser $ chainl1 expr' (return ((() :<) . EAp))
+    f = return eap
+    --Token.lexeme tokenParser $ chainl1 expr' $ return eap
 
 -- | Expression parser.
 expr :: Parser SyntacticExpr

@@ -11,6 +11,7 @@ import qualified Data.Set as Set
 
 import Lang.Identifier
 import Lang.Core
+import Lang.Expr
 
 -- | Find all VariableNames referenced in an Expr.
 exprDependencies :: Expr a b
@@ -28,7 +29,9 @@ exprDependencies (_ :< ELet bg e) ignore = Set.union bgDeps eDeps
     boundNames = Set.fromList (map identifier bg)
 
 -- | Find all VariableNames referenced in a Binding.
-bindingDependencies :: Binding a (Expr a b) -> Set.Set VariableName -> Set.Set VariableName
+bindingDependencies :: Binding a (Expr a b)
+                    -> Set.Set VariableName
+                    -> Set.Set VariableName
 bindingDependencies b ignore = exprDependencies (body b) ignore'
   where
     ignore' = Set.union (Set.fromList (identifier b : arguments b)) ignore

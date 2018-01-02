@@ -1,6 +1,5 @@
 module Lang.Parser.Tests ( tests ) where
 
-import Control.Comonad.Cofree
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase)
 import Test.HUnit (Assertion, (@?=), assert)
@@ -9,6 +8,7 @@ import Data.Either (isLeft)
 import Text.Parsec (parse)
 
 import Lang.Core
+import Lang.Expr
 import Lang.Parser
 import qualified Lang.Type as T
 
@@ -39,17 +39,19 @@ testTypeFunction = parse typ "" "a -> b" @?= Right expected
 testTypeFunctionAssoc :: Assertion
 testTypeFunctionAssoc = parse typ "" "a -> b -> c" @?= Right expected
   where
-    expected = T.genEmptyEnv . T.Qual [] $ T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) f
+    expected =
+        T.genEmptyEnv . T.Qual [] $ T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) f
     f = T.makeFun (T.TVar (T.Tyvar "b" T.KStar)) (T.TVar (T.Tyvar "c" T.KStar))
 
 testTypeFunctionParens :: Assertion
 testTypeFunctionParens = parse typ "" "((a -> b) -> c)" @?= Right expected
   where
-    expected = T.genEmptyEnv . T.Qual [] $ T.makeFun f (T.TVar (T.Tyvar "c" T.KStar))
+    expected =
+        T.genEmptyEnv . T.Qual [] $ T.makeFun f (T.TVar (T.Tyvar "c" T.KStar))
     f = T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) (T.TVar (T.Tyvar "b" T.KStar))
 
 testVar :: Assertion
-testVar = parse var "" s @?= Right (Nothing :< EVar s)
+testVar = parse var "" s @?= Right (evar s)
   where
     s = "abc123"
 
@@ -62,28 +64,29 @@ testInvalidVars = assert . all isLeft $
     ]
 
 testPositiveInteger :: Assertion
-testPositiveInteger = parse literal "" "123" @?= Right (Nothing :< ELit (LInt 123))
+testPositiveInteger =
+    parse literal "" "123" @?= Right (elit (LInt 123))
 
 testApVar :: Assertion
 testApVar = parse application "" "f x y" @?= expected
   where
-    expected = Right $ Nothing :< EAp (Nothing :< EAp (Nothing :< EVar "f") (Nothing :< EVar "x")) (Nothing :< EVar "y")
+    expected = Right $ eap (eap (evar "f") (evar "x")) (evar "y")
 
 testApIntegers :: Assertion
 testApIntegers = parse application "" "f 1" @?= expected
   where
-    expected = Right $ Nothing :< EAp (Nothing :< EVar "f") (Nothing :< ELit (LInt 1))
+    expected = Right $ eap (evar "f") (elit (LInt 1))
 
 testNestedAp :: Assertion
 testNestedAp = parse application "" "f (g 1)" @?= expected
   where
-    expected = Right $ Nothing :< EAp (Nothing :< EVar "f") (Nothing :< EAp (Nothing :< EVar "g") (Nothing :< ELit (LInt 1)))
+    expected = Right $ eap (evar "f") (eap (evar "g") (elit (LInt 1)))
 
 -- | Tests that expression parsing consumes as much of a string as possible.
 testMaximalExpr :: Assertion
 testMaximalExpr = parse expr "" "f 1 2" @?= expected
   where
-    expected = Right $ Nothing :< EAp (Nothing :< EAp (Nothing :< EVar "f") (Nothing :< ELit (LInt 1))) (Nothing :< ELit (LInt 2))
+    expected = Right $ eap (eap (evar "f") (elit (LInt 1))) (elit (LInt 2))
 
 testNoArgsBinding :: Assertion
 testNoArgsBinding = parse binding "" "let f = 2" @?= expected
@@ -91,7 +94,7 @@ testNoArgsBinding = parse binding "" "let f = 2" @?= expected
     expected = Right Binding
         { identifier = "f"
         , arguments = []
-        , body = Nothing :< ELit (LInt 2)
+        , body = elit (LInt 2)
         , annot = Nothing
         }
 
@@ -101,7 +104,7 @@ testArgsBinding = parse binding "" "let f x y = x y" @?= expected
     expected = Right Binding
         { identifier = "f"
         , arguments = ["x", "y"]
-        , body = Nothing :< EAp (Nothing :< EVar "x") (Nothing :< EVar "y")
+        , body = eap (evar "x") (evar "y")
         , annot = Nothing
         }
 
