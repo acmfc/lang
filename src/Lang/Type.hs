@@ -48,8 +48,8 @@ tVariantCon = TCon (Tycon "<_>" (KFun KRow KStar))
 tLabelCon :: Type
 tLabelCon = TCon (Tycon "Lab" (KFun KLab KStar))
 
-makeLabelConst :: LabelName -> Type
-makeLabelConst l = TAp tLabelCon (TCon (Tycon l KLab))
+makeLabelType :: LabelName -> Type
+makeLabelType l = TAp tLabelCon (TCon (Tycon l KLab))
 
 -- Notes from fclabels:
 -- row variable: TVar (Tyvar "rowvarname" KRow)

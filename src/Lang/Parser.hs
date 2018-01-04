@@ -12,6 +12,7 @@ module Lang.Parser
 
 import Data.Char (isUpper)
 import Data.Functor.Identity
+import Data.Maybe (fromMaybe)
 import Text.Parsec
 import Text.Parsec.String
 import qualified Text.Parsec.Token as Token
@@ -21,8 +22,25 @@ import Lang.Expr
 import Lang.Identifier
 import qualified Lang.Type as T
 
+-- Taken from:
+-- https://stackoverflow.com/questions/17968784/an-easy-way-to-change-the-type-of-parsec-user-state
+changeState :: (Functor m, Monad m)
+            => (u -> v)
+            -> (v -> u)
+            -> ParsecT s u m a
+            -> ParsecT s v m a
+changeState forward backward = mkPT . transform . runParsecT
+  where
+    mapState f st = st { stateUser = f (stateUser st) }
+    mapReply f (Ok a st err) = Ok a (mapState f st) err
+    mapReply _ (Error e) = Error e
+    fmap3 = fmap . fmap . fmap
+    transform p st = fmap3 (mapReply forward) (p (mapState backward st))
+
+-- TODO Properly handle operators with the operator parsers.
+
 -- | Defines token rules for the type language
-typeLanguageDef :: Token.LanguageDef ()
+typeLanguageDef :: Token.LanguageDef TypeParserState
 typeLanguageDef = Token.LanguageDef
     { Token.commentStart = ""
     , Token.commentEnd = ""
@@ -37,33 +55,91 @@ typeLanguageDef = Token.LanguageDef
     , Token.caseSensitive = True
     }
 
-typeTokenParser :: Token.GenTokenParser String () Identity
+type TypeParserState = (Int, [T.Pred])
+type TypeParser a = Parsec String TypeParserState a
+
+typeTokenParser :: Token.GenTokenParser String TypeParserState Identity
 typeTokenParser = Token.makeTokenParser typeLanguageDef
 
 isTypeConstructor :: String -> Bool
 isTypeConstructor [] = False
 isTypeConstructor (c : _) = isUpper c
 
-tAtom :: Parser T.Type
+tAtom :: TypeParser T.Type
 tAtom = do
     i <- Token.identifier typeTokenParser
     if isTypeConstructor i then return $ T.TCon $ T.Tycon i T.KStar
     else return $ T.TVar $ T.Tyvar i T.KStar
 
-tFunction :: Parser T.Type
+tFunction :: TypeParser T.Type
 tFunction = do
     left <- try $ do
-        left <- Token.parens typeTokenParser typ' <|> tAtom
+        left <- Token.parens typeTokenParser typ' <|> tRecord <|> tAtom
         _ <- Token.symbol typeTokenParser "->"
         return left
     right <- typ'
     return $ T.makeFun left right
 
-typ' :: Parser T.Type
-typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tAtom
+constrainRowVarForLabel :: T.Row -> T.Row -> LabelName -> T.Type -> [T.Pred]
+constrainRowVarForLabel extends rowVar labelName t = preds
+  where
+    preds = [ T.RowEq rowVar (T.RExt l t extends)
+            , T.RowLacks extends l
+            ]
+    l = T.makeLabelType labelName
+
+makeRowVariableName :: Int -> T.TypeVariableName
+makeRowVariableName = ("$r" ++) . show
+
+makeRowVarForLabels :: T.Row
+                    -> Int
+                    -> [(LabelName, T.Type)]
+                    -> (Int, T.Row, [T.Pred])
+makeRowVarForLabels baseRowVar startIdx = foldr f (startIdx, baseRowVar, [])
+  where
+    f (i, t) (n, extends, preds) = (n + 1, rowVar, preds' ++ preds)
+      where
+        rowVar = T.RVar $ T.TVar $ T.Tyvar (makeRowVariableName n) T.KRow
+        preds' = constrainRowVarForLabel extends rowVar i t
+
+tLabel :: TypeParser (LabelName, T.Type)
+tLabel = do
+    i <- Token.identifier typeTokenParser
+    _ <- Token.symbol typeTokenParser ":"
+    t <- typ'
+    return (i, t)
+
+tRecordBase :: TypeParser String
+tRecordBase =
+    Token.symbol typeTokenParser "|" >> Token.identifier typeTokenParser
+
+tRecord' :: TypeParser T.Type
+tRecord' = do
+    ls <- sepBy tLabel (Token.symbol typeTokenParser ",")
+    st <- getState
+    let defaultBaseVarName = makeRowVariableName $ fst st
+    baseVarName <- fromMaybe defaultBaseVarName <$> optionMaybe tRecordBase
+    let baseVar = T.TVar $ T.Tyvar baseVarName T.KRow
+        baseRowVar = T.RVar baseVar
+        startIdx = fst st + 1
+        (n, T.RVar rowVar, preds) = makeRowVarForLabels baseRowVar startIdx ls
+    modifyState $ (,) n . (preds ++) . snd
+    return $ T.TAp T.tRecordCon rowVar
+
+tRecord :: TypeParser T.Type
+tRecord = Token.braces typeTokenParser tRecord'
+
+typ' :: TypeParser T.Type
+typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tRecord <|> tAtom
 
 typ :: Parser T.Scheme
-typ = T.genEmptyEnv . T.Qual [] <$> typ'
+typ = T.genEmptyEnv . uncurry T.Qual <$> stateless
+  where
+    stateless = changeState (const ()) (const (0, [])) typ''
+    typ'' = do
+        t <- typ'
+        st <- getState
+        return (snd st, t)
 
 -- | Defines token rules for the language.
 languageDef :: Token.LanguageDef ()

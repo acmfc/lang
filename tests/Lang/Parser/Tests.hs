@@ -50,6 +50,28 @@ testTypeFunctionParens = parse typ "" "((a -> b) -> c)" @?= Right expected
         T.genEmptyEnv . T.Qual [] $ T.makeFun f (T.TVar (T.Tyvar "c" T.KStar))
     f = T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) (T.TVar (T.Tyvar "b" T.KStar))
 
+testTypeRecord :: Assertion
+testTypeRecord = parse typ "" toParse @?= Right expected
+  where
+    toParse = "{x: Int | r} -> {y: Int, z: Int}"
+    expected = T.genEmptyEnv . T.Qual preds $ t
+    preds = [ T.RowEq (T.RVar var4) (T.RExt y T.tInt (T.RVar var3))
+            , T.RowLacks (T.RVar var3) y
+            , T.RowEq (T.RVar var3) (T.RExt z T.tInt (T.RVar var2))
+            , T.RowLacks (T.RVar var2) z
+            , T.RowEq (T.RVar var1) (T.RExt x T.tInt (T.RVar varBase))
+            , T.RowLacks (T.RVar varBase) x
+            ]
+    t = T.makeFun (T.TAp T.tRecordCon var1) (T.TAp T.tRecordCon var4)
+    varBase = T.TVar $ T.Tyvar "r" T.KRow
+    var1 = T.TVar $ T.Tyvar "$r1" T.KRow
+    var2 = T.TVar $ T.Tyvar "$r2" T.KRow
+    var3 = T.TVar $ T.Tyvar "$r3" T.KRow
+    var4 = T.TVar $ T.Tyvar "$r4" T.KRow
+    x = T.makeLabelType "x"
+    y = T.makeLabelType "y"
+    z = T.makeLabelType "z"
+
 testVar :: Assertion
 testVar = parse var "" s @?= Right (evar s)
   where
@@ -127,6 +149,7 @@ tests = testGroup "Lang.Parser"
         , testCase "Type function" testTypeFunction
         , testCase "Type function associativity" testTypeFunctionAssoc
         , testCase "Type function parens" testTypeFunctionParens
+        , testCase "Type record" testTypeRecord
         ]
     , testGroup "Expression"
         [ testGroup "Literal"

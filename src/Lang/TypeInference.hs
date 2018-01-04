@@ -80,7 +80,7 @@ newTVar k = do
     st <- get
     let n = counter st
     put st { counter = n + 1 }
-    return $ TVar (Tyvar ("t" ++ show n) k)
+    return $ TVar (Tyvar ("$t" ++ show n) k)
 
 -- | Instantiate quantified type variables in a type scheme with fresh type
 -- variables.
@@ -92,7 +92,7 @@ type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
 tiLit :: Literal -> TI ([Pred], Type)
 tiLit (LInt _) = return ([], tInt)
-tiLit (LLab l) = return ([], makeLabelConst l)
+tiLit (LLab l) = return ([], makeLabelType l)
 
 tiExpr :: Infer SyntacticExpr Type
 tiExpr (TypeEnv env) (_ :< EVar x) = case Map.lookup x env of

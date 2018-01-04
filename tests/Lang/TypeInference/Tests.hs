@@ -15,7 +15,7 @@ import Lang.TypeInference
 import qualified Lang.Parser as Parser
 
 tvs :: [Tyvar]
-tvs = map (\n -> Tyvar ("t" ++ show n) KStar) ([0..] :: [Integer])
+tvs = map (\n -> Tyvar ("$t" ++ show n) KStar) ([0..] :: [Integer])
 
 tIntBinop :: Type
 tIntBinop = foldr makeFun tInt [tInt, tInt]
