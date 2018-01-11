@@ -1,14 +1,56 @@
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Lang.PrettyPrint (printTypeEnv, prettyPrint) where
 
-import Text.PrettyPrint
+import Control.Comonad.Cofree
 import Data.List (inits)
 import qualified Data.Map as Map
 import Data.Maybe (isJust)
+import Text.PrettyPrint
 
+import Lang.Core
+import Lang.Expr
 import Lang.Type
 
 class PrettyPrint p where
     prettyPrint :: p -> Doc
+
+instance PrettyPrint Literal where
+    prettyPrint (LInt n) = text $ show n
+    prettyPrint (LLab l) = text "@" <> text l
+
+conditionalParens :: Bool -> Doc -> Doc
+conditionalParens True = parens
+conditionalParens False = id
+
+separateByEmptyLine :: [Doc] -> Doc
+separateByEmptyLine = hcat . punctuate (text "\n\n")
+
+instance (PrettyPrint a, PrettyPrint b) => PrettyPrint (Expr a b) where
+    prettyPrint (_ :< EVar x) = text x
+    prettyPrint (_ :< ELit l) = prettyPrint l
+    prettyPrint (_ :< EAp e1 e2) =
+        prettyPrint e1 <+> conditionalParens (isEAp e2) (prettyPrint e2)
+      where
+        isEAp (_ :< EAp _ _) = True
+        isEAp _ = False
+    prettyPrint (_ :< ELet bg e) =
+        prettyPrint bg <> text "\n\n" <> prettyPrint e
+
+instance (PrettyPrint a, PrettyPrint b) => PrettyPrint (Binding a b) where
+    prettyPrint b = prettyVal <> text "\n" <> prettyDef
+      where
+        prettyVal = text "val" <+> text (identifier b) <> prettyAnnot
+        prettyAnnot = colon <+> prettyPrint (annot b)
+        prettyDef =  prettyLet <+> text "=" <+> prettyPrint (body b)
+        prettyLet = text "let" <+> text (identifier b) <+> prettyArgs
+        prettyArgs = hsep (map text (arguments b))
+
+instance (PrettyPrint a, PrettyPrint b) => PrettyPrint (BindingGroup a b) where
+    prettyPrint = separateByEmptyLine . map prettyPrint
+
+instance (PrettyPrint a, PrettyPrint b) => PrettyPrint (Program a b) where
+    prettyPrint = separateByEmptyLine . map prettyPrint
 
 extractFunctionType :: Type -> Maybe (Type, Type)
 extractFunctionType (TAp (TAp tc t1) t2) | tc == tArrow = Just (t1, t2)
@@ -16,10 +58,6 @@ extractFunctionType _ = Nothing
 
 isFunction :: Type -> Bool
 isFunction = isJust . extractFunctionType
-
-conditionalParens :: Bool -> Doc -> Doc
-conditionalParens True = parens
-conditionalParens False = id
 
 extractRecordType :: Type -> Maybe Type
 extractRecordType (TAp tc t) | tc == tRecordCon = Just t

@@ -2,7 +2,7 @@ module Main where
 
 import Data.List
 import qualified Data.Map as Map
---import Text.Parsec
+import Text.PrettyPrint
 
 import Lang.DependencyAnalysis
 import Lang.Parser
@@ -38,11 +38,12 @@ exampleProgram = intercalate "\n"
 main :: IO ()
 main = case parseProgram exampleProgram of
     Left err -> putStrLn $ "Parse error: " ++ show err
-    --Right ast -> putStrLn $ show ast
     Right ast -> case tiProgram initialTypeEnv (structureBindings ast) of
         Left err -> putStrLn $ "Type inference error: " ++ show err
         Right (_, typeEnv, typedProgram) -> do
-            putStrLn "Demo program was successfully type-checked:"
+            putStrLn "Demo program was successfully type-checked."
+            putStrLn "Type environment:"
             mapM_ putStrLn $ printTypeEnv typeEnv
-            putStrLn $ "\n" ++ show typedProgram
+            putStrLn "\nTyped program:"
+            putStrLn . render $ prettyPrint typedProgram
 
