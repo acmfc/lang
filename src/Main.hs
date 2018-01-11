@@ -41,7 +41,8 @@ main = case parseProgram exampleProgram of
     --Right ast -> putStrLn $ show ast
     Right ast -> case tiProgram initialTypeEnv (structureBindings ast) of
         Left err -> putStrLn $ "Type inference error: " ++ show err
-        Right (_, typeEnv) -> do
+        Right (_, typeEnv, typedProgram) -> do
             putStrLn "Demo program was successfully type-checked:"
             mapM_ putStrLn $ printTypeEnv typeEnv
+            putStrLn $ "\n" ++ show typedProgram
 

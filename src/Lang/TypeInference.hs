@@ -90,42 +90,42 @@ inst (Scheme tvs qt) = do ts <- mapM (newTVar . kind) tvs
 
 type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
-tiLit :: Literal -> TI ([Pred], Type)
-tiLit (LInt _) = return ([], tInt)
-tiLit (LLab l) = return ([], makeLabelType l)
+tiLit :: Literal -> TI Type
+tiLit (LInt _) = return tInt
+tiLit (LLab l) = return $ makeLabelType l
 
-tiExpr :: Infer SyntacticExpr Type
+tiExpr :: Infer SyntacticExpr TypedExpr
 tiExpr (TypeEnv env) (_ :< EVar x) = case Map.lookup x env of
     Nothing -> throwError . InferenceError $ "Unbound variable: " ++ x
     Just scheme -> do Qual ps t <- inst scheme
-                      return (ps, t)
-tiExpr _ (_ :< ELit l) = tiLit l
+                      return (ps, t :< EVar x)
+tiExpr _ (_ :< ELit l) = tiLit l >>= \t -> return ([], t :< ELit l)
 tiExpr env (_ :< EAp e1 e2) = do
-    (ps, te1) <- tiExpr env e1
-    (qs, te2) <- tiExpr env e2
+    (ps, te1 :< e1') <- tiExpr env e1
+    (qs, te2 :< e2') <- tiExpr env e2
     t <- newTVar KStar
     unify (makeFun te2 t) te1
-    return (ps ++ qs, t)
+    return (ps ++ qs, t :< EAp (te1 :< e1') (te2 :< e2'))
 tiExpr (TypeEnv env) (_ :< ELet bg e) = do
-    (ps, TypeEnv env') <- tiBindingGroup (TypeEnv env) bg
-    (qs, t) <- tiExpr (TypeEnv (Map.union env' env)) e
-    return (ps ++ qs, t)
+    (ps, (TypeEnv env', bg')) <- tiBindingGroup (TypeEnv env) bg
+    (qs, t :< e') <- tiExpr (TypeEnv (Map.union env' env)) e
+    return (ps ++ qs, t :< ELet bg' (t :< e'))
 
 -- | Run type inference for the expression in a binding and unify it with t.
--- Because t takes on the type of the expression, env should map b's identifier
--- to t to allow for recursive bindings.
+-- Because t takes on the type of the bound identifier, env should map b's
+-- identifier to t to allow for recursive bindings.
 tiBoundExpr :: TypeEnv
             -> Binding a SyntacticExpr
             -> Type
-            -> TI [Pred]
+            -> TI ([Pred], TypedExpr)
 tiBoundExpr (TypeEnv env) b t = do
     -- Create a fresh type variable for each argument.
     targs <- mapM (const (newTVar KStar)) (arguments b)
     let schemes = map toScheme targs
         env' = Map.union (Map.fromList (zip (arguments b) schemes)) env
-    (ps, te) <- tiExpr (TypeEnv env') (body b)
+    (ps, te :< e) <- tiExpr (TypeEnv env') (body b)
     unify t $ foldr makeFun te targs
-    return ps
+    return (ps, te :< e)
 
 equivalentTypes :: Type -> Type -> State Subst Bool
 equivalentTypes (TVar tyv1) (TVar tyv2) = do
@@ -186,26 +186,28 @@ equivalentSchemes (Scheme tyvs1 qt1) (Scheme tyvs2 qt2) = do
     return $ and b1s && b2
 
 -- TODO Split predicates into deferred and retained predicates.
-tiExplBinding :: TypeEnv -> Binding Scheme SyntacticExpr -> TI [Pred]
+tiExplBinding :: Infer (Binding Scheme SyntacticExpr) TypedBinding
 tiExplBinding (TypeEnv env) b = do
     let schemeAnnot = annot b
     Qual qs t <- inst schemeAnnot
-    ps <- tiBoundExpr (TypeEnv env) b t
+    (ps, e) <- tiBoundExpr (TypeEnv env) b t
     s <- getSubst
     let qs' = apply s qs
         t' = apply s t
+        e' = apply s e
         schemeInferred = gen (apply s (TypeEnv env)) (Qual qs' t')
     let st = equivalentSchemes schemeInferred schemeAnnot
         equivalent = evalState st empty
     if not equivalent then throwError . InferenceError $ "signature too general"
-    else return $ apply s ps
+    else return (apply s ps, b { body = e' })
 
 -- | Run type inference for each binding in the binding group. Every expression
 -- within the group can see the instantiated type variables representing every
 -- other.
 -- TODO Split predicates into deferred and retained predicates.
 -- TODO Implement the monomorphism restriction.
-tiImplBindingGroup :: Infer (BindingGroup () SyntacticExpr) TypeEnv
+tiImplBindingGroup ::
+    Infer (BindingGroup () SyntacticExpr) (TypeEnv, TypedBindingGroup)
 tiImplBindingGroup (TypeEnv env) bg = do
     -- Allocate a type variable for each binding.
     ts <- mapM (const (newTVar KStar)) bg
@@ -215,22 +217,28 @@ tiImplBindingGroup (TypeEnv env) bg = do
         env' = Map.union (Map.fromList (zip identifiers schemes)) env
     -- Unify the type allocated for each binding with the type inferred for its
     -- expression.
-    pss <- zipWithM (tiBoundExpr (TypeEnv env')) bg ts
+    bindingsResult <- zipWithM (tiBoundExpr (TypeEnv env')) bg ts
+    let (pss, es) = (map fst bindingsResult, map snd bindingsResult)
     s <- getSubst
     let ps' = apply s (concat pss)
         ts' = apply s ts
+        es' = apply s es
         -- Generalize all the types we found for the newly-bound names.
         schemes' = map (gen (apply s (TypeEnv env)) . Qual ps') ts'
-    return (ps', TypeEnv . Map.fromList $ zip identifiers schemes')
+    let bg' = zipWith3 (\b sc e -> b { annot = sc, body = e }) bg schemes' es'
+    return (ps', (TypeEnv (Map.fromList (zip identifiers schemes')), bg'))
 
-tiBindingGroup :: Infer (BindingGroup (Maybe Scheme) SyntacticExpr) TypeEnv
+tiBindingGroup :: Infer (BindingGroup (Maybe Scheme) SyntacticExpr) (TypeEnv,
+        TypedBindingGroup)
 tiBindingGroup (TypeEnv env) bg = do
-    let (es, is) = partitionByAnnotation bg
-        TypeEnv env' = envFromExplBindingGroup es
-    (ps, TypeEnv env'') <- tiImplBindingGroup (TypeEnv $ Map.union env' env) is
-    let fullEnv = TypeEnv $ env'' `Map.union` env' `Map.union` env
-    qss <- mapM (tiExplBinding fullEnv) es
-    return (ps ++ concat qss, TypeEnv $ Map.union env'' env')
+    let (expls, impls) = partitionByAnnotation bg
+        TypeEnv explEnv = envFromExplBindingGroup expls
+        env' = Map.union explEnv env
+    (ps, (TypeEnv env'', typedImpls)) <- tiImplBindingGroup (TypeEnv env') impls
+    let fullEnv = TypeEnv $ env'' `Map.union` env'
+    bindingResults <- mapM (tiExplBinding fullEnv) expls
+    let (qss, typedExpls) = (map fst bindingResults, map snd bindingResults)
+    return (ps ++ concat qss, (fullEnv, typedExpls ++ typedImpls))
 
 envFromExplBindingGroup :: BindingGroup Scheme SyntacticExpr -> TypeEnv
 envFromExplBindingGroup bg = TypeEnv $ foldr addAnnot Map.empty annotPairs
@@ -250,18 +258,20 @@ partitionByAnnotation = partitionEithers . map f
 
 -- | Enhance a type inferencer to run over a list rather than a single entity,
 -- accumulating an environment as it goes.
-tiSequence :: Infer a TypeEnv -> Infer [a] TypeEnv
-tiSequence _ env [] = return ([], env)
+tiSequence :: Infer a (TypeEnv, TypedBindingGroup)
+           -> Infer [a] (TypeEnv, TypedProgram)
+tiSequence _ env [] = return ([], (env, []))
 tiSequence ti (TypeEnv env) (x : xs) = do
-    (ps, TypeEnv env') <- ti (TypeEnv env) x
-    (qs, TypeEnv env'') <- tiSequence ti (TypeEnv (Map.union env' env)) xs
-    return (ps ++ qs, TypeEnv $ Map.union env'' env')
+    (ps, (TypeEnv tmpEnv, bg)) <- ti (TypeEnv env) x
+    let env' = Map.union tmpEnv env
+    (qs, (TypeEnv env'', bg')) <- tiSequence ti (TypeEnv env') xs
+    return (ps ++ qs, (TypeEnv (Map.union env'' env'), bg : bg'))
 
 -- TODO Deal with ambiguities and defaults.
 tiProgram :: TypeEnv -> Program (Maybe Scheme) SyntacticExpr ->
-    Either InferenceError ([Pred], TypeEnv)
+    Either InferenceError ([Pred], TypeEnv, TypedProgram)
 tiProgram env bgs = runTI $ do
-    (ps, env') <- tiSequence tiBindingGroup env bgs
+    (ps, (env', bgs')) <- tiSequence tiBindingGroup env bgs
     s <- getSubst
-    return (ps, apply s env')
+    return (ps, apply s env', apply s bgs')
 
