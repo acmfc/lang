@@ -48,8 +48,8 @@ tVariantCon = TCon (Tycon "<_>" (KFun KRow KStar))
 tLabelCon :: Type
 tLabelCon = TCon (Tycon "Lab" (KFun KLab KStar))
 
-makeLabelType :: LabelName -> Type
-makeLabelType l = TAp tLabelCon (TCon (Tycon l KLab))
+makeConstLabel :: LabelName -> Type
+makeConstLabel l = TAp tLabelCon (TCon (Tycon l KLab))
 
 makeLabelVarType :: LabelName -> Type
 makeLabelVarType l = TAp tLabelCon (TVar (Tyvar l KLab))

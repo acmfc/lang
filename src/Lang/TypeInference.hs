@@ -92,7 +92,7 @@ type Infer e t = TypeEnv -> e -> TI ([Pred], t)
 
 tiLit :: Literal -> TI Type
 tiLit (LInt _) = return tInt
-tiLit (LLab l) = return $ makeLabelType l
+tiLit (LLab l) = return $ makeConstLabel l
 
 tiExpr :: Infer SyntacticExpr TypedExpr
 tiExpr (TypeEnv env) (_ :< EVar x) = case Map.lookup x env of

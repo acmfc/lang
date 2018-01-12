@@ -24,6 +24,7 @@ initialTypeEnv = fromJust . makeTypeEnv $ spec
   where
     spec = [ ("add", "Int -> Int -> Int")
            , ("select", "Lab l -> {l : a} -> a")
+           , ("empty", "{||}")
            ]
 
 exampleProgram :: String

@@ -13,47 +13,47 @@ import Lang.Parser
 import qualified Lang.Type as T
 
 testTypeVariable :: Assertion
-testTypeVariable = parse typ "" tv @?= Right expected
+testTypeVariable = parseTyp tv @?= Right expected
   where
     tv = "abc"
     expected = T.genEmptyEnv . T.Qual [] $ T.TVar $ T.Tyvar tv T.KStar
 
 testTypeConstant :: Assertion
-testTypeConstant = parse typ "" tc @?= Right expected
+testTypeConstant = parseTyp tc @?= Right expected
   where
     tc = "Abc"
     expected = T.genEmptyEnv . T.Qual [] $ T.TCon $ T.Tycon tc T.KStar
 
 testTypeParens :: Assertion
-testTypeParens = parse typ "" "((a))" @?= Right expected
+testTypeParens = parseTyp "((a))" @?= Right expected
   where
     expected = T.genEmptyEnv . T.Qual [] $ T.TVar (T.Tyvar "a" T.KStar)
 
 testTypeFunction :: Assertion
-testTypeFunction = parse typ "" "a -> b" @?= Right expected
+testTypeFunction = parseTyp "a -> b" @?= Right expected
   where
     expected = T.genEmptyEnv . T.Qual [] $ T.makeFun tv1 tv2
     tv1 = T.TVar (T.Tyvar "a" T.KStar)
     tv2 = T.TVar (T.Tyvar "b" T.KStar)
 
 testTypeFunctionAssoc :: Assertion
-testTypeFunctionAssoc = parse typ "" "a -> b -> c" @?= Right expected
+testTypeFunctionAssoc = parseTyp "a -> b -> c" @?= Right expected
   where
     expected =
         T.genEmptyEnv . T.Qual [] $ T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) f
     f = T.makeFun (T.TVar (T.Tyvar "b" T.KStar)) (T.TVar (T.Tyvar "c" T.KStar))
 
 testTypeFunctionParens :: Assertion
-testTypeFunctionParens = parse typ "" "((a -> b) -> c)" @?= Right expected
+testTypeFunctionParens = parseTyp "((a -> b) -> c)" @?= Right expected
   where
     expected =
         T.genEmptyEnv . T.Qual [] $ T.makeFun f (T.TVar (T.Tyvar "c" T.KStar))
     f = T.makeFun (T.TVar (T.Tyvar "a" T.KStar)) (T.TVar (T.Tyvar "b" T.KStar))
 
 testTypeRecord :: Assertion
-testTypeRecord = parse typ "" toParse @?= Right expected
+testTypeRecord = parseTyp toParse @?= Right expected
   where
-    toParse = "{x: Int | r} -> {y: Int, z: Int}"
+    toParse = "{ x : Int | r } -> { y : Int, z : Int }"
     expected = T.genEmptyEnv . T.Qual preds $ t
     preds = [ T.RowEq (T.RVar var4) (T.RExt y T.tInt (T.RVar var3))
             , T.RowLacks (T.RVar var3) y
@@ -68,9 +68,23 @@ testTypeRecord = parse typ "" toParse @?= Right expected
     var2 = T.TVar $ T.Tyvar "$r2" T.KRow
     var3 = T.TVar $ T.Tyvar "$r3" T.KRow
     var4 = T.TVar $ T.Tyvar "$r4" T.KRow
-    x = T.makeLabelType "x"
-    y = T.makeLabelType "y"
-    z = T.makeLabelType "z"
+    x = T.TVar $ T.Tyvar "x" T.KLab
+    y = T.TVar $ T.Tyvar "y" T.KLab
+    z = T.TVar $ T.Tyvar "z" T.KLab
+
+testTypeFinalRecord :: Assertion
+testTypeFinalRecord = parseTyp toParse @?= Right expected
+  where
+    toParse = "{| x : Int |}"
+    expected = T.genEmptyEnv . T.Qual preds $ t
+    preds = [ T.RowEq (T.RVar var1) (T.RExt x T.tInt (T.RVar var0))
+            , T.RowLacks (T.RVar var0) x
+            , T.RowEq (T.RVar var0) T.REmpty
+            ]
+    t = T.TAp T.tRecordCon var1
+    var0 = T.TVar $ T.Tyvar "$r0" T.KRow
+    var1 = T.TVar $ T.Tyvar "$r1" T.KRow
+    x = T.TVar $ T.Tyvar "x" T.KLab
 
 testVar :: Assertion
 testVar = parse var "" s @?= Right (evar s)
@@ -143,13 +157,14 @@ testProgram = fmap (map Right) (parse program "" content) @?= expected
 tests :: TestTree
 tests = testGroup "Lang.Parser"
     [ testGroup "Type"
-        [ testCase "Type variable" testTypeVariable
-        , testCase "Type constant" testTypeConstant
-        , testCase "Type parens" testTypeParens
-        , testCase "Type function" testTypeFunction
-        , testCase "Type function associativity" testTypeFunctionAssoc
-        , testCase "Type function parens" testTypeFunctionParens
-        , testCase "Type record" testTypeRecord
+        [ testCase "Variable" testTypeVariable
+        , testCase "Constant" testTypeConstant
+        , testCase "Parens" testTypeParens
+        , testCase "Function" testTypeFunction
+        , testCase "Function associativity" testTypeFunctionAssoc
+        , testCase "Function parens" testTypeFunctionParens
+        , testCase "Record" testTypeRecord
+        , testCase "Final record" testTypeFinalRecord
         ]
     , testGroup "Expression"
         [ testGroup "Literal"
