@@ -1,5 +1,6 @@
 module Lang.Parser
     ( typ
+    , parseTyp
     , var
     , literal
     , application
@@ -48,9 +49,9 @@ typeLanguageDef = Token.LanguageDef
     , Token.nestedComments = False
     , Token.identStart = letter <|> char '_'
     , Token.identLetter = alphaNum <|> char '_'
-    , Token.opStart = oneOf ".=->()"
-    , Token.opLetter = oneOf ".=->()"
-    , Token.reservedNames = ["forall"]
+    , Token.opStart = oneOf ".=->()@"
+    , Token.opLetter = oneOf ".=->()@"
+    , Token.reservedNames = ["forall", "Lab"]
     , Token.reservedOpNames = [".", "->", "(", ")"]
     , Token.caseSensitive = True
     }
@@ -71,10 +72,17 @@ tAtom = do
     if isTypeConstructor i then return $ T.TCon $ T.Tycon i T.KStar
     else return $ T.TVar $ T.Tyvar i T.KStar
 
+tLabelVar :: TypeParser T.Type
+tLabelVar = do
+    _ <- Token.reserved typeTokenParser "Lab"
+    i <- Token.identifier typeTokenParser
+    return . T.makeLabelVarType $ i
+
 tFunction :: TypeParser T.Type
 tFunction = do
     left <- try $ do
-        left <- Token.parens typeTokenParser typ' <|> tRecord <|> tAtom
+        left <- Token.parens typeTokenParser typ' <|> tRecord <|>
+                tLabelVar <|> tAtom
         _ <- Token.symbol typeTokenParser "->"
         return left
     right <- typ'
@@ -86,7 +94,7 @@ constrainRowVarForLabel extends rowVar labelName t = preds
     preds = [ T.RowEq rowVar (T.RExt l t extends)
             , T.RowLacks extends l
             ]
-    l = T.makeLabelType labelName
+    l = T.TVar . T.Tyvar labelName $ T.KLab
 
 makeRowVariableName :: Int -> T.TypeVariableName
 makeRowVariableName = ("$r" ++) . show
@@ -130,7 +138,8 @@ tRecord :: TypeParser T.Type
 tRecord = Token.braces typeTokenParser tRecord'
 
 typ' :: TypeParser T.Type
-typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tRecord <|> tAtom
+typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tRecord <|>
+        tLabelVar <|> tAtom
 
 typ :: Parser T.Scheme
 typ = T.genEmptyEnv . uncurry T.Qual <$> stateless
@@ -140,6 +149,9 @@ typ = T.genEmptyEnv . uncurry T.Qual <$> stateless
         t <- typ'
         st <- getState
         return (snd st, t)
+
+parseTyp :: String -> Either ParseError T.Scheme
+parseTyp = parse typ ""
 
 -- | Defines token rules for the language.
 languageDef :: Token.LanguageDef ()
