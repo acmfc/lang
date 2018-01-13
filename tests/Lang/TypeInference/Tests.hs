@@ -57,7 +57,7 @@ testLargeBindingGroup =
         expectedEnv = TypeEnv (Map.fromList
                       [ ("+", toScheme tIntBinop)
                       , ("f", toScheme tIntBinop)
-                      , ("id", toScheme $ tIntUnop)
+                      , ("id", toScheme tIntUnop)
                       ])
         program = [[ Binding { identifier = "id"
                              , arguments = ["a"]

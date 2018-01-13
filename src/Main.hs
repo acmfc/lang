@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Arrow (second)
 import Data.List
 import Data.Maybe (fromJust)
 import Text.PrettyPrint
@@ -13,27 +14,32 @@ import Lang.Type
 import Lang.TypeInference
 
 makeTypeEnv :: [(String, String)] -> Maybe TypeEnv
-makeTypeEnv spec = fmap (TypeEnv . Map.fromList) $ foldr f (Just []) parsedSpec
+makeTypeEnv spec = TypeEnv . Map.fromList <$> foldr f (Just []) parsedSpec
   where
     f (name, Right typeSpec) (Just acc) = Just ((name, typeSpec) : acc)
     f _ _ = Nothing
-    parsedSpec = map (\(name, typeSpec) -> (name, parseTyp typeSpec)) spec
+    parsedSpec = map (second parseTyp) spec
 
 initialTypeEnv :: TypeEnv
 initialTypeEnv = fromJust . makeTypeEnv $ spec
   where
     spec = [ ("add", "Int -> Int -> Int")
-           , ("select", "Lab l -> {l : a} -> a")
-           , ("empty", "{||}")
+           , ("any", "Lab l")
+           , ("id", "a -> a")
+           , ("emptyR", "{||}")
+           , ("extend", "Lab l -> a -> { | r } -> { l : a | r }")
+           , ("select", "Lab l -> { l : a } -> a")
+           , ("emptyV", "<||>")
+           , ("inject", "Lab l -> a -> < l : a | r >")
+           , ("embed", "Lab l -> < | r > -> < l : a | r >")
            ]
 
 exampleProgram :: String
 exampleProgram = intercalate "\n"
     [ "let apply f x = f x"
-    , "let f a = add a 0"
     , "let incx r = add 1 (select @x r)"
     , "val z: a -> (a -> c) -> c"
-    , "let z x f = f x"
+    , "let testRowOps = select any (extend @x 0 (extend @y id emptyR))"
     ]
 
 main :: IO ()

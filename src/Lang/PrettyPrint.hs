@@ -59,30 +59,27 @@ extractFunctionType _ = Nothing
 isFunction :: Type -> Bool
 isFunction = isJust . extractFunctionType
 
-extractRecordType :: Type -> Maybe Type
-extractRecordType (TAp tc t) | tc == tRecordCon = Just t
-extractRecordType _ = Nothing
-
 instance PrettyPrint Type where
     prettyPrint (TVar (Tyvar tvn _)) = text tvn
     prettyPrint (TCon (Tycon s _)) = text s
+    prettyPrint (TAp tc t) | tc == tRecordCon = braces $ prettyPrint t
+    prettyPrint (TAp tc t) | tc == tVariantCon =
+        char '<' <> prettyPrint t <> char '>'
     prettyPrint t@(TAp t1 t2) = case extractFunctionType t of
         Just (t1', t2') -> ppt1' <+> text "->" <+> prettyPrint t2'
           where
             ppt1' = conditionalParens (isFunction t1') (prettyPrint t1')
-        Nothing -> case extractRecordType t of
-            Just t' -> prettyPrint t'
-            Nothing -> prettyPrint t1 <+> prettyPrint t2
+        Nothing -> prettyPrint t1 <+> prettyPrint t2
 
 -- TODO Rename row variables.
 instance PrettyPrint Row where
     prettyPrint (RVar t) = prettyPrint t
-    prettyPrint REmpty = text "{}"
+    prettyPrint REmpty = text "()"
     prettyPrint (RExt t1 t2 r) =
         ppExt (prettyPrint t1) (prettyPrint t2) (prettyPrint r)
           where
             ppExt ppt1 ppt2 ppr =
-                braces $ ppt1 <+> text ":" <+> ppt2 <+> text "|" <+> ppr
+                parens $ ppt1 <+> text ":" <+> ppt2 <+> text "|" <+> ppr
 
 instance PrettyPrint Pred where
     prettyPrint (RowLacks t1 t2) = parens $ ppt1 <> text "\\" <> ppt2

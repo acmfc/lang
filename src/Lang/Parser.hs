@@ -82,7 +82,7 @@ tFunction :: TypeParser T.Type
 tFunction = do
     left <- try $ do
         left <- Token.parens typeTokenParser typ' <|> tRecord <|>
-                tLabelVar <|> tAtom
+                tVariant <|> tLabelVar <|> tAtom
         _ <- Token.symbol typeTokenParser "->"
         return left
     right <- typ'
@@ -126,17 +126,8 @@ modifyTypeParserState modifyIdx modifyPreds = modifyState f
   where
     f (idx, preds) = (modifyIdx idx, modifyPreds preds)
 
-tRecordBaseVar :: TypeParser T.Type
-tRecordBaseVar = do
-    st <- getState
-    let defaultBaseVarName = makeRowVariableName $ fst st
-    modifyTypeParserState (+ 1) id
-    baseVarName <- fromMaybe defaultBaseVarName <$> optionMaybe tRecordBaseId
-    return . T.TVar . T.Tyvar baseVarName $ T.KRow
-
-tExtensibleRecord :: TypeParser T.Type
-tExtensibleRecord = Token.braces typeTokenParser $ tRecord' tRecordBaseVar
-
+-- | Create a row variable and add a predicate equating the variable with the
+-- empty row.
 tEmptyVar :: TypeParser T.Type
 tEmptyVar = do
     st <- getState
@@ -145,18 +136,16 @@ tEmptyVar = do
     modifyTypeParserState (+ 1) (T.RowEq (T.RVar ret) T.REmpty :)
     return ret
 
+tRecordBaseVar :: TypeParser T.Type
+tRecordBaseVar = do
+    st <- getState
+    let defaultBaseVarName = makeRowVariableName $ fst st
+    modifyTypeParserState (+ 1) id
+    baseVarName <- fromMaybe defaultBaseVarName <$> optionMaybe tRecordBaseId
+    return . T.TVar . T.Tyvar baseVarName $ T.KRow
 
-tFinalRecord :: TypeParser T.Type
-tFinalRecord = Token.braces typeTokenParser tFinalRecord'
-  where
-    tFinalRecord' = do
-        _ <- Token.symbol typeTokenParser "|"
-        r <- tRecord' tEmptyVar
-        _ <- Token.symbol typeTokenParser "|"
-        return r
-
-tRecord' :: TypeParser T.Type -> TypeParser T.Type
-tRecord' getBaseVar = do
+tRow :: TypeParser T.Type -> TypeParser T.Type
+tRow getBaseVar = do
     ls <- sepBy tLabel (Token.symbol typeTokenParser ",")
     baseVar <- getBaseVar
     st <- getState
@@ -164,14 +153,45 @@ tRecord' getBaseVar = do
         startIdx = fst st
         (n, T.RVar rowVar, preds) = makeRowVarForLabels baseRowVar startIdx ls
     modifyTypeParserState (const n) (preds ++)
-    return $ T.TAp T.tRecordCon rowVar
+    return rowVar
+
+tExtensibleRow :: TypeParser T.Type
+tExtensibleRow = tRow tRecordBaseVar
+
+tFinalRow :: TypeParser T.Type
+tFinalRow = do
+    _ <- Token.symbol typeTokenParser "|"
+    r <- tRow tEmptyVar
+    _ <- Token.symbol typeTokenParser "|"
+    return r
+
+tRecord' :: TypeParser T.Type -> TypeParser T.Type
+tRecord' row = Token.braces typeTokenParser $ T.TAp T.tRecordCon <$> row
+
+tExtensibleRecord :: TypeParser T.Type
+tExtensibleRecord = tRecord' tExtensibleRow
+
+tFinalRecord :: TypeParser T.Type
+tFinalRecord = tRecord' tFinalRow
 
 tRecord :: TypeParser T.Type
 tRecord = try tFinalRecord <|> tExtensibleRecord
 
+tVariant' :: TypeParser T.Type -> TypeParser T.Type
+tVariant' row = Token.angles typeTokenParser $ T.TAp T.tVariantCon <$> row
+
+tExtensibleVariant :: TypeParser T.Type
+tExtensibleVariant = tVariant' tExtensibleRow
+
+tFinalVariant :: TypeParser T.Type
+tFinalVariant = tVariant' tFinalRow
+
+tVariant :: TypeParser T.Type
+tVariant = try tFinalVariant <|> tExtensibleVariant
+
 typ' :: TypeParser T.Type
 typ' = tFunction <|> Token.parens typeTokenParser typ' <|> tRecord <|>
-        tLabelVar <|> tAtom
+        tVariant <|> tLabelVar <|> tAtom
 
 typ :: Parser T.Scheme
 typ = T.genEmptyEnv . uncurry T.Qual <$> stateless
